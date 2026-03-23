@@ -1,0 +1,56 @@
+import type { SessionUser } from "@/shared/types/auth.types";
+
+export const mockUsers: SessionUser[] = [
+  {
+    id: "usr-superadmin",
+    fullName: "Catalina Vega",
+    email: "c.vega@plataforma.com",
+    role: "superadmin",
+    avatarFallback: "CV",
+  },
+  {
+    id: "usr-admin-hsj",
+    fullName: "Mauricio Rojas",
+    email: "m.rojas@hsj.com",
+    role: "admin_institucional",
+    tenantId: "tenant-hsj",
+    area: "Direccion Operativa",
+    avatarFallback: "MR",
+  },
+  {
+    id: "usr-planner-hsj",
+    fullName: "Laura Gomez",
+    email: "laura.gomez@hsj.com",
+    role: "planificador",
+    tenantId: "tenant-hsj",
+    area: "Planeacion Turnos",
+    avatarFallback: "LG",
+  },
+  {
+    id: "usr-coord-hsj",
+    fullName: "Sebastian Ortiz",
+    email: "s.ortiz@hsj.com",
+    role: "coordinador",
+    tenantId: "tenant-hsj",
+    area: "Coordinacion UCI",
+    avatarFallback: "SO",
+  },
+  {
+    id: "usr-emp-hsj",
+    fullName: "Paula Medina",
+    email: "paula.medina@hsj.com",
+    role: "empleado",
+    tenantId: "tenant-hsj",
+    area: "Enfermeria",
+    avatarFallback: "PM",
+  },
+  {
+    id: "usr-consulta-hsj",
+    fullName: "Nicolas Cruz",
+    email: "n.cruz@hsj.com",
+    role: "consulta",
+    tenantId: "tenant-hsj",
+    area: "Auditoria",
+    avatarFallback: "NC",
+  },
+];

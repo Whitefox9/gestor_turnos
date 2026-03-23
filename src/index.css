@@ -1,0 +1,26 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply min-h-screen bg-background text-foreground antialiased;
+    background-image:
+      radial-gradient(circle at top, rgba(14, 116, 144, 0.12), transparent 32%),
+      linear-gradient(to bottom, rgba(255, 255, 255, 0.96), rgba(241, 245, 249, 0.95)),
+      radial-gradient(circle at 1px 1px, rgba(15, 23, 42, 0.05) 1px, transparent 0);
+    background-size: auto, auto, 22px 22px;
+  }
+
+  #root {
+    @apply min-h-screen;
+  }
+}
