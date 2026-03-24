@@ -1,13 +1,12 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { ArrowRightLeft, BedDouble, Building, Dna, HeartPulse, RotateCcw, ShieldCheck, Sparkles, Users2 } from "lucide-react";
+import type { ReactNode } from "react";
+import { BedDouble, Building, Dna, HeartPulse, ShieldCheck, Sparkles, Users2 } from "lucide-react";
 import { Badge } from "@/shared/components/ui/badge";
-import { Button } from "@/shared/components/ui/button";
 import type { CareModule } from "@/shared/types/module.types";
 import type { Employee } from "@/shared/types/employee.types";
 import type { Rule } from "@/shared/types/rule.types";
-import type { HoverAssignmentPreview } from "@/shared/types/scheduling.types";
+import type { HoverAssignmentPreview, LocalizedIncidentImpact, ShiftAssignment, ShiftKind } from "@/shared/types/scheduling.types";
 import { DroppableAssignmentSlot } from "./DroppableAssignmentSlot";
-import { getHoverAssignmentPreview, getMockAssignmentScore, getMockModuleRisk, getMockModuleScore, getMockSlotRisk } from "../services/scheduling.service";
+import { getHoverAssignmentPreview, getMockAssignmentScore, getMockModuleRisk, getMockModuleScore, getMockSlotRisk, getModuleDailyShiftSummary } from "../services/scheduling.service";
 
 const areaIcons = {
   UCI: HeartPulse,
@@ -19,27 +18,46 @@ const areaIcons = {
 export function ModuleCard({
   module,
   modules,
+  employees,
   assignedEmployees,
   activeRules,
   previewEmployee,
   hoveredTargetId,
+  selectedTargetId,
+  planningDate,
+  planningShift,
+  weeklyAssignments,
   successTargetId,
   releasedTargetId,
-  onUnassign,
-  onReassign,
+  invalidAssignedEmployeeIds,
+  incidentImpacts,
+  onSelectIncidentImpact,
+  onSelectTarget,
+  onSelectModule,
+  onSelectShift,
 }: {
   module: CareModule;
   modules: CareModule[];
+  employees: Employee[];
   assignedEmployees: Employee[];
   activeRules: Rule[];
   previewEmployee?: Employee | null;
   hoveredTargetId?: string | null;
+  selectedTargetId?: string | null;
+  planningDate: string;
+  planningShift: ShiftKind;
+  weeklyAssignments: ShiftAssignment[];
   successTargetId?: string | null;
   releasedTargetId?: string | null;
-  onUnassign: (employeeId: string, moduleId: string) => void;
-  onReassign: (employeeId: string, moduleId: string) => void;
+  invalidAssignedEmployeeIds: string[];
+  incidentImpacts: LocalizedIncidentImpact[];
+  onSelectIncidentImpact: (incidentId: string) => void;
+  onSelectTarget: (targetId: string) => void;
+  onSelectModule: (moduleId: string) => void;
+  onSelectShift: (moduleId: string, shift: ShiftKind) => void;
 }) {
-  const Icon = areaIcons[module.area];
+  const Icon = areaIcons[module.area as keyof typeof areaIcons] ?? Building;
+  const isModuleSelected = selectedTargetId === `module::${module.id}`;
   const occupancyRatio = assignedEmployees.length / module.capacity;
   const status =
     assignedEmployees.length === 0 ? "Sin cobertura" : occupancyRatio >= 1 ? "Cubierto" : "Cobertura parcial";
@@ -49,9 +67,27 @@ export function ModuleCard({
   const emptySlots = slots.length - occupiedSlots;
   const moduleScore = getMockModuleScore(module, assignedEmployees, activeRules);
   const moduleRisk = getMockModuleRisk(module, assignedEmployees, activeRules);
+  const dailyShiftSummary = getModuleDailyShiftSummary({
+    moduleId: module.id,
+    assignments: weeklyAssignments,
+    planningDate,
+  }).map((entry) =>
+    entry.shift === planningShift
+      ? {
+          ...entry,
+          count: assignedEmployees.length,
+        }
+      : entry,
+  );
+  const employeesById = new Map(employees.map((employee) => [employee.id, employee]));
 
   return (
-    <div className="space-y-5 pb-12">
+    <div
+      className={`space-y-5 rounded-[26px] px-1 py-1 transition ${
+        isModuleSelected ? "ring-2 ring-cyan-200 ring-offset-2 ring-offset-white" : ""
+      }`}
+      onClick={() => onSelectModule(module.id)}
+    >
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-3">
@@ -86,15 +122,101 @@ export function ModuleCard({
         <SummaryMetric label="Score mock" value={`${moduleScore}`} icon={<Sparkles className="h-4 w-4" />} />
       </div>
 
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Jornadas del día</p>
+          <p className="text-xs text-slate-500">Edita otra franja sin salir del módulo</p>
+        </div>
+        <div className="grid grid-cols-5 gap-2">
+          {dailyShiftSummary.map((entry) => {
+            const previewNames = entry.employeeIds
+              .slice(0, 2)
+              .map((employeeId) => employeesById.get(employeeId)?.fullName.split(" ")[0] ?? "N/A");
+
+            return (
+            <button
+              key={`${module.id}-${entry.shift}`}
+              type="button"
+              className={`rounded-2xl border px-2 py-2 text-center ${
+                entry.shift === planningShift
+                  ? "border-primary bg-cyan-50 text-cyan-900"
+                  : "border-slate-200 bg-slate-50 text-slate-700"
+              }`}
+              onClick={(event) => {
+                event.stopPropagation();
+                onSelectShift(module.id, entry.shift);
+              }}
+            >
+              <p className="text-[10px] font-semibold uppercase tracking-[0.08em]">
+                {entry.shift === "manana"
+                  ? "M"
+                  : entry.shift === "tarde"
+                    ? "T"
+                    : entry.shift === "noche"
+                      ? "N"
+                      : entry.shift === "noche_larga"
+                        ? "NL"
+                        : "DR"}
+              </p>
+              <p className="mt-1 text-sm font-semibold">
+                {entry.shift === "descanso_remunerado" ? entry.count : `${entry.count}/${module.capacity}`}
+              </p>
+              <div className="mt-2 min-h-8 space-y-1">
+                {previewNames.length > 0 ? (
+                  <>
+                    {previewNames.map((name) => (
+                      <p key={`${module.id}-${entry.shift}-${name}`} className="truncate text-[10px] leading-tight text-slate-500">
+                        {name}
+                      </p>
+                    ))}
+                    {entry.employeeIds.length > 2 ? (
+                      <p className="text-[10px] leading-tight text-slate-400">+{entry.employeeIds.length - 2}</p>
+                    ) : null}
+                  </>
+                ) : (
+                  <p className="text-[10px] leading-tight text-slate-400">
+                    {entry.shift === "descanso_remunerado" ? "Sin descanso" : "Sin cobertura"}
+                  </p>
+                )}
+              </div>
+            </button>
+          )})}
+        </div>
+      </div>
+
       {moduleRisk.reasons.length > 0 ? (
         <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
           <span className="font-medium text-slate-800">Reglas con impacto:</span> {moduleRisk.reasons.join(" · ")}
         </div>
       ) : null}
 
+      {incidentImpacts.length > 0 ? (
+        <button
+          type="button"
+          className="w-full rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-left text-sm text-amber-900 transition hover:border-amber-300"
+          onClick={(event) => {
+            event.stopPropagation();
+            onSelectIncidentImpact(incidentImpacts[0].incidentId);
+          }}
+        >
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="h-2.5 w-2.5 shrink-0 rounded-full bg-amber-500" />
+              <div className="min-w-0">
+                <p className="font-medium">Incidencia localizada</p>
+                <p className="truncate text-amber-800">
+                  {incidentImpacts[0].employeeName} fuera
+                </p>
+              </div>
+            </div>
+            <Badge variant="warning">{incidentImpacts.length}</Badge>
+          </div>
+        </button>
+      ) : null}
+
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Slots del módulo</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Slots del turno activo</p>
           <p className="text-sm text-slate-500">{occupiedSlots} ocupados · {emptySlots} libres</p>
         </div>
         <div className="grid gap-3">
@@ -121,18 +243,8 @@ export function ModuleCard({
                 previewCandidateName={preview?.employeeName}
                 previewScore={preview?.score}
                 previewAdvisoryCodes={preview?.advisoryRuleCodes}
-                action={
-                  employee ? (
-                    <AssignedSlotActions
-                      employee={employee}
-                      currentModule={module}
-                      modules={modules}
-                      activeRules={activeRules}
-                      onUnassign={onUnassign}
-                      onReassign={onReassign}
-                    />
-                  ) : null
-                }
+                isSelected={selectedTargetId === slotTargetId}
+                onSelect={onSelectTarget}
               />
             );
           })}
@@ -153,6 +265,7 @@ export function ModuleCard({
               >
                 <span className="min-w-0 truncate">{employee.fullName}</span>
                 <Badge variant="info">Fit {getMockAssignmentScore(employee, module, activeRules)}</Badge>
+                {invalidAssignedEmployeeIds.includes(employee.id) ? <Badge variant="warning">Inválido</Badge> : null}
               </div>
             ))}
           </div>
@@ -162,104 +275,6 @@ export function ModuleCard({
           </div>
         )}
       </div>
-    </div>
-  );
-}
-
-function AssignedSlotActions({
-  employee,
-  currentModule,
-  modules,
-  activeRules,
-  onUnassign,
-  onReassign,
-}: {
-  employee: Employee;
-  currentModule: CareModule;
-  modules: CareModule[];
-  activeRules: Rule[];
-  onUnassign: (employeeId: string, moduleId: string) => void;
-  onReassign: (employeeId: string, moduleId: string) => void;
-}) {
-  const targetModules = modules
-    .filter((module) => module.id !== currentModule.id)
-    .map((module) => {
-      const isCompatible =
-        employee.moduleIds.includes(module.id) ||
-        module.requiredSkills.some((skill) => employee.skills.includes(skill));
-
-      return {
-        module,
-        isCompatible,
-        score: getMockAssignmentScore(employee, module, activeRules),
-      };
-    })
-    .sort((left, right) => {
-      if (left.isCompatible !== right.isCompatible) {
-        return left.isCompatible ? -1 : 1;
-      }
-      return right.score - left.score;
-    });
-  const suggestedModules = targetModules.filter((entry) => entry.isCompatible).slice(0, 2);
-  const [selectedModuleId, setSelectedModuleId] = useState<string>(targetModules[0]?.module.id ?? "");
-
-  useEffect(() => {
-    if (!targetModules.some((entry) => entry.module.id === selectedModuleId)) {
-      setSelectedModuleId(targetModules[0]?.module.id ?? "");
-    }
-  }, [selectedModuleId, targetModules]);
-
-  return (
-    <div className="space-y-2">
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        className="h-8 w-full justify-start rounded-lg px-2 text-slate-600"
-        onClick={() => onUnassign(employee.id, currentModule.id)}
-      >
-        <RotateCcw className="h-3.5 w-3.5" />
-        Devolver al pool
-      </Button>
-
-      {targetModules.length > 0 ? (
-        <div className="rounded-xl border border-slate-200 bg-white p-2">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Reasignar</p>
-          {suggestedModules.length > 0 ? (
-            <div className="mt-2 flex flex-wrap gap-2">
-              {suggestedModules.map(({ module, score }) => (
-                <Badge key={`${employee.id}-${module.id}`} variant="info">
-                  {module.area} · Fit {score}
-                </Badge>
-              ))}
-            </div>
-          ) : null}
-          <div className="mt-2 grid gap-2">
-            <select
-              value={selectedModuleId}
-              onChange={(event) => setSelectedModuleId(event.target.value)}
-              className="h-9 min-w-0 w-full rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-700 outline-none transition focus:border-primary"
-            >
-              {targetModules.map(({ module, score, isCompatible }) => (
-                <option key={`${employee.id}-${module.id}`} value={module.id}>
-                  {module.name} · Fit {score}{isCompatible ? " · sugerida" : " · sujeta a validación"}
-                </option>
-              ))}
-            </select>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-9 w-full justify-center rounded-lg border-slate-200 px-2 text-slate-600"
-              onClick={() => selectedModuleId && onReassign(employee.id, selectedModuleId)}
-              disabled={!selectedModuleId}
-            >
-              <ArrowRightLeft className="h-3.5 w-3.5" />
-              Reasignar
-            </Button>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

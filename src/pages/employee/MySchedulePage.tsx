@@ -37,6 +37,7 @@ export function MySchedulePage() {
         .map((module) => ({
           versionId: version.id,
           versionLabel: version.versionLabel,
+          plannedDate: version.plannedDate,
           shift: version.shift,
           moduleName: module.name,
           status: version.status,
@@ -75,6 +76,7 @@ export function MySchedulePage() {
                 {upcomingAssignments[0] ? (
                   <>
                     <p className="font-medium text-foreground">{upcomingAssignments[0].moduleName}</p>
+                    <p>{formatDate(upcomingAssignments[0].plannedDate)}</p>
                     <p>{getShiftLabel(upcomingAssignments[0].shift)}</p>
                     <Badge variant="success">{upcomingAssignments[0].versionLabel}</Badge>
                   </>
@@ -95,6 +97,7 @@ export function MySchedulePage() {
                   upcomingAssignments.slice(0, 3).map((assignment) => (
                     <div key={`${assignment.versionId}-${assignment.moduleName}`} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
                       <p className="font-medium text-foreground">{assignment.moduleName}</p>
+                      <p>{formatDate(assignment.plannedDate)}</p>
                       <p>{getShiftLabel(assignment.shift)}</p>
                     </div>
                   ))
@@ -137,12 +140,27 @@ export function MySchedulePage() {
   );
 }
 
-function getShiftLabel(shift: "manana" | "tarde" | "noche") {
+function getShiftLabel(shift: ShiftKind) {
   if (shift === "manana") {
     return "Turno mañana";
   }
   if (shift === "tarde") {
     return "Turno tarde";
   }
-  return "Turno noche";
+  if (shift === "noche") {
+    return "Turno noche";
+  }
+  if (shift === "noche_larga") {
+    return "Turno noche larga";
+  }
+  return "Descanso remunerado";
 }
+
+function formatDate(date: string) {
+  return new Date(`${date}T00:00:00`).toLocaleDateString("es-CO", {
+    weekday: "long",
+    day: "2-digit",
+    month: "long",
+  });
+}
+import type { ShiftKind } from "@/shared/types/scheduling.types";

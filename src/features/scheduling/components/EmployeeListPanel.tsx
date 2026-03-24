@@ -4,8 +4,9 @@ import { EmptyState } from "@/shared/components/feedback/EmptyState";
 import type { Employee } from "@/shared/types/employee.types";
 import type { CareModule } from "@/shared/types/module.types";
 import type { Rule } from "@/shared/types/rule.types";
+import type { ShiftAssignment, ShiftKind } from "@/shared/types/scheduling.types";
 import { DraggableEmployeeCard } from "./DraggableEmployeeCard";
-import { getMockAssignmentScore } from "../services/scheduling.service";
+import { getEmployeeWeekStats, getMockAssignmentScore, isEmployeeCompatibleWithModule } from "../services/scheduling.service";
 
 export function EmployeeListPanel({
   employees,
@@ -13,12 +14,20 @@ export function EmployeeListPanel({
   activeRules,
   hoveredModuleId,
   onQuickAssign,
+  weeklyAssignments,
+  weekStartDate,
+  planningDate,
+  planningShift,
 }: {
   employees: Employee[];
   modules: CareModule[];
   activeRules: Rule[];
   hoveredModuleId?: string | null;
   onQuickAssign: (employeeId: string, moduleId: string) => void;
+  weeklyAssignments: ShiftAssignment[];
+  weekStartDate: string;
+  planningDate: string;
+  planningShift: ShiftKind;
 }) {
   const hoveredModule = modules.find((module) => module.id === hoveredModuleId);
   const topRecommendationRanks = useMemo(() => {
@@ -29,9 +38,7 @@ export function EmployeeListPanel({
     return new Map(
       [...employees]
         .filter(
-          (employee) =>
-            employee.moduleIds.includes(hoveredModule.id) ||
-            hoveredModule.requiredSkills.some((skill) => employee.skills.includes(skill)),
+          (employee) => isEmployeeCompatibleWithModule(employee, hoveredModule).compatible,
         )
         .sort((left, right) => {
           const operationalDelta = getOperationalRank(left) - getOperationalRank(right);
@@ -39,12 +46,12 @@ export function EmployeeListPanel({
             return operationalDelta;
           }
 
-          return getMockAssignmentScore(right, hoveredModule, activeRules) - getMockAssignmentScore(left, hoveredModule, activeRules);
+          return getMockAssignmentScore(right, hoveredModule, activeRules, weeklyAssignments, planningDate, planningShift) - getMockAssignmentScore(left, hoveredModule, activeRules, weeklyAssignments, planningDate, planningShift);
         })
         .slice(0, 3)
         .map((employee, index) => [employee.id, index + 1]),
     );
-  }, [activeRules, employees, hoveredModule]);
+  }, [activeRules, employees, hoveredModule, weeklyAssignments, planningDate, planningShift]);
 
   const groups = useMemo(() => {
     const grouped = {
@@ -64,12 +71,8 @@ export function EmployeeListPanel({
           return left.fullName.localeCompare(right.fullName);
         }
 
-        const leftCompatible =
-          left.moduleIds.includes(hoveredModule.id) ||
-          hoveredModule.requiredSkills.some((skill) => left.skills.includes(skill));
-        const rightCompatible =
-          right.moduleIds.includes(hoveredModule.id) ||
-          hoveredModule.requiredSkills.some((skill) => right.skills.includes(skill));
+        const leftCompatible = isEmployeeCompatibleWithModule(left, hoveredModule).compatible;
+        const rightCompatible = isEmployeeCompatibleWithModule(right, hoveredModule).compatible;
 
         if (leftCompatible !== rightCompatible) {
           return leftCompatible ? -1 : 1;
@@ -82,12 +85,18 @@ export function EmployeeListPanel({
         return getMockAssignmentScore(right, hoveredModule, activeRules) - getMockAssignmentScore(left, hoveredModule, activeRules);
       })
       .forEach((employee) => {
+        const weekStats = getEmployeeWeekStats({
+          employeeId: employee.id,
+          assignments: weeklyAssignments,
+          weekStartDate,
+        });
+
         if (employee.status === "off") {
           grouped.unavailable.push(employee);
           return;
         }
 
-        if (employee.weeklyHours >= 40 || employee.assignedToday || employee.status === "busy") {
+        if (employee.weeklyHours >= 40 || employee.assignedToday || employee.status === "busy" || weekStats.nightShifts >= 2 || weekStats.compensatoryDays === 0) {
           grouped.attention.push(employee);
           return;
         }
@@ -118,7 +127,7 @@ export function EmployeeListPanel({
         items: grouped.unavailable,
       },
     ];
-  }, [activeRules, employees, hoveredModule]);
+  }, [activeRules, employees, hoveredModule, weeklyAssignments, weekStartDate, planningDate, planningShift]);
 
   if (employees.length === 0) {
     return <EmptyState title="Sin resultados" description="Ajusta el filtro para encontrar perfiles disponibles." />;
@@ -171,6 +180,10 @@ export function EmployeeListPanel({
                           : undefined
                       }
                       onQuickAssign={onQuickAssign}
+                      weeklyAssignments={weeklyAssignments}
+                      weekStartDate={weekStartDate}
+                      planningDate={planningDate}
+                      planningShift={planningShift}
                     />
                   ))}
                 </div>

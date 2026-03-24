@@ -1,11 +1,12 @@
 import type { CareModule } from "@/shared/types/module.types";
 import type { Employee } from "@/shared/types/employee.types";
 import type { Rule } from "@/shared/types/rule.types";
+import type { LocalizedIncidentImpact, ShiftAssignment, ShiftKind } from "@/shared/types/scheduling.types";
 import { Badge } from "@/shared/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/shared/components/ui/card";
 import { DroppableModuleSlot } from "./DroppableModuleSlot";
 import { ModuleCard } from "./ModuleCard";
-import { getMockModuleRisk } from "../services/scheduling.service";
+import { getInvalidAssignedEmployeeIdsForModule, getMockModuleRisk } from "../services/scheduling.service";
 
 export function ModuleBoard({
   modules,
@@ -13,24 +14,40 @@ export function ModuleBoard({
   activeRules,
   previewEmployee,
   hoveredTargetId,
+  selectedTargetId,
   invalidModuleId,
   successModuleId,
   successTargetId,
   releasedTargetId,
-  onUnassign,
-  onReassign,
+  planningDate,
+  planningShift,
+  weeklyAssignments,
+  weekStartDate,
+  incidentImpacts,
+  onSelectIncidentImpact,
+  onSelectTarget,
+  onSelectModule,
+  onSelectShift,
 }: {
   modules: CareModule[];
   employees: Employee[];
   activeRules: Rule[];
   previewEmployee?: Employee | null;
   hoveredTargetId?: string | null;
+  selectedTargetId?: string | null;
   invalidModuleId?: string | null;
   successModuleId?: string | null;
   successTargetId?: string | null;
   releasedTargetId?: string | null;
-  onUnassign: (employeeId: string, moduleId: string) => void;
-  onReassign: (employeeId: string, moduleId: string) => void;
+  planningDate: string;
+  planningShift: ShiftKind;
+  weeklyAssignments: ShiftAssignment[];
+  weekStartDate: string;
+  incidentImpacts: LocalizedIncidentImpact[];
+  onSelectIncidentImpact: (incidentId: string) => void;
+  onSelectTarget: (targetId: string) => void;
+  onSelectModule: (moduleId: string) => void;
+  onSelectShift: (moduleId: string, shift: ShiftKind) => void;
 }) {
   const assignedCount = modules.reduce((total, module) => total + module.assignedEmployeeIds.length, 0);
 
@@ -57,6 +74,16 @@ export function ModuleBoard({
           {modules.map((module, index) => {
             const assignedEmployees = employees.filter((employee) => module.assignedEmployeeIds.includes(employee.id));
             const moduleRisk = getMockModuleRisk(module, assignedEmployees, activeRules);
+            const invalidAssignedEmployeeIds = getInvalidAssignedEmployeeIdsForModule({
+              module,
+              employees,
+              rules: activeRules,
+              assignments: weeklyAssignments,
+              planningDate,
+              planningShift,
+              weekStartDate,
+            });
+            const moduleIncidentImpacts = incidentImpacts.filter((impact) => impact.moduleId === module.id);
 
             return (
               <div
@@ -72,14 +99,23 @@ export function ModuleBoard({
                   <ModuleCard
                     module={module}
                     modules={modules}
+                    employees={employees}
                     assignedEmployees={assignedEmployees}
                     activeRules={activeRules}
                     previewEmployee={previewEmployee}
                     hoveredTargetId={hoveredTargetId}
+                    selectedTargetId={selectedTargetId}
+                    planningDate={planningDate}
+                    planningShift={planningShift}
+                    weeklyAssignments={weeklyAssignments}
                     successTargetId={successTargetId}
                     releasedTargetId={releasedTargetId}
-                    onUnassign={onUnassign}
-                    onReassign={onReassign}
+                    invalidAssignedEmployeeIds={invalidAssignedEmployeeIds}
+                    incidentImpacts={moduleIncidentImpacts}
+                    onSelectIncidentImpact={onSelectIncidentImpact}
+                    onSelectTarget={onSelectTarget}
+                    onSelectModule={onSelectModule}
+                    onSelectShift={onSelectShift}
                   />
                 </DroppableModuleSlot>
               </div>

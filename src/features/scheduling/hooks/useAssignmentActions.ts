@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { usePlanningHistoryStore } from "@/app/store/planning-history.store";
-import type { AuditEntry, PublicationSimulationResult, PublicationVersion } from "@/shared/types/scheduling.types";
+import type { AuditEntry, PublicationSimulationResult, PublicationVersion, ShiftAssignment, ShiftKind } from "@/shared/types/scheduling.types";
 import type { Employee } from "@/shared/types/employee.types";
 import type { CareModule } from "@/shared/types/module.types";
 import type { Rule } from "@/shared/types/rule.types";
@@ -17,7 +17,6 @@ type AssignmentFeedback = {
 export function useAssignmentActions() {
   const publicationVersions = usePlanningHistoryStore((state) => state.publicationVersions);
   const auditEntries = usePlanningHistoryStore((state) => state.auditEntries);
-  const currentPlanningShift = usePlanningHistoryStore((state) => state.currentPlanningShift);
   const addPublicationVersion = usePlanningHistoryStore((state) => state.addPublicationVersion);
   const addAuditEntry = usePlanningHistoryStore((state) => state.addAuditEntry);
   const [feedback, setFeedback] = useState<AssignmentFeedback>(null);
@@ -61,6 +60,10 @@ export function useAssignmentActions() {
     modules,
     targetId,
     rules,
+    assignments,
+    planningDate,
+    planningShift,
+    weekStartDate,
   }: {
     employeeId: string;
     moduleId: string;
@@ -68,6 +71,10 @@ export function useAssignmentActions() {
     modules: CareModule[];
     targetId: string;
     rules: Rule[];
+    assignments?: ShiftAssignment[];
+    planningDate?: string;
+    planningShift?: ShiftKind;
+    weekStartDate?: string;
   }) {
     const result = await schedulingService.validateAssignment({
       employeeId,
@@ -75,6 +82,10 @@ export function useAssignmentActions() {
       employees,
       modules,
       rules,
+      assignments,
+      planningDate,
+      planningShift,
+      weekStartDate,
     });
 
     if (!result.valid) {
@@ -144,16 +155,28 @@ export function useAssignmentActions() {
     modules,
     rules,
     actorName,
+    assignments,
+    planningDate,
+    planningShift,
+    weekStartDate,
   }: {
     employees: Employee[];
     modules: CareModule[];
     rules: Rule[];
     actorName?: string;
+    assignments?: ShiftAssignment[];
+    planningDate?: string;
+    planningShift?: ShiftKind;
+    weekStartDate?: string;
   }) {
     const result = await schedulingService.simulatePublication({
       employees,
       modules,
       rules,
+      assignments,
+      planningDate,
+      planningShift,
+      weekStartDate,
     });
 
     setSimulation(result);
@@ -190,16 +213,28 @@ export function useAssignmentActions() {
     modules,
     rules,
     actorName,
+    assignments,
+    planningDate,
+    planningShift = "manana",
+    weekStartDate,
   }: {
     employees: Employee[];
     modules: CareModule[];
     rules: Rule[];
     actorName: string;
+    assignments?: ShiftAssignment[];
+    planningDate?: string;
+    planningShift?: ShiftKind;
+    weekStartDate?: string;
   }) {
     const result = await schedulingService.simulatePublication({
       employees,
       modules,
       rules,
+      assignments,
+      planningDate,
+      planningShift,
+      weekStartDate,
     });
 
     setSimulation(result);
@@ -226,7 +261,8 @@ export function useAssignmentActions() {
     const version: PublicationVersion = {
       id: `publication-${versionNumber}`,
       versionLabel: `v${versionNumber}.0`,
-      shift: currentPlanningShift,
+      plannedDate: planningDate ?? new Date().toISOString().slice(0, 10),
+      shift: planningShift,
       publishedBy: actorName,
       status: "pendiente",
       rulesUsed: rules.filter((rule) => rule.enabled).map((rule) => rule.code),

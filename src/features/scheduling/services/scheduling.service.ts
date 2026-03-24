@@ -1,3 +1,5 @@
+import { useModuleCatalogStore } from "@/app/store/module-catalog.store";
+import { usePlanningHistoryStore } from "@/app/store/planning-history.store";
 import { apiClient } from "@/services/api/client";
 import { employeesMock } from "@/services/mocks/employees.mock";
 import { modulesMock } from "@/services/mocks/modules.mock";
@@ -5,16 +7,32 @@ import { rulesMock } from "@/services/mocks/rules.mock";
 import { schedulingAssignmentsMock } from "@/services/mocks/scheduling.mock";
 import type { AIInsight } from "@/shared/types/ai.types";
 import type { Employee } from "@/shared/types/employee.types";
+import type { Incident } from "@/shared/types/incident.types";
 import type { CareModule } from "@/shared/types/module.types";
 import type { Rule } from "@/shared/types/rule.types";
-import type { AssignmentValidationResult, HoverAssignmentPreview, PublicationSimulationResult } from "@/shared/types/scheduling.types";
+import type {
+  AssignmentValidationResult,
+  HoverAssignmentPreview,
+  IncidentReplacementSuggestion,
+  LocalizedIncidentImpact,
+  PublicationSimulationResult,
+  ShiftAssignment,
+  ShiftBucketSummary,
+  ShiftKind,
+} from "@/shared/types/scheduling.types";
 
 export const schedulingService = {
   async getPlanningBoard(tenantId?: string) {
+    const catalogModules = useModuleCatalogStore.getState().modules;
+    const planningState = usePlanningHistoryStore.getState();
+    if (planningState.weeklyAssignments.length === 0) {
+      planningState.hydrateWeeklyAssignments(schedulingAssignmentsMock);
+    }
+
     return apiClient.simulate({
       employees: employeesMock.filter((item) => !tenantId || item.tenantId === tenantId),
-      modules: modulesMock.filter((item) => !tenantId || item.tenantId === tenantId),
-      assignments: schedulingAssignmentsMock,
+      modules: catalogModules.filter((item) => !tenantId || item.tenantId === tenantId),
+      assignments: planningState.weeklyAssignments,
     });
   },
   async validateAssignment({
@@ -23,12 +41,20 @@ export const schedulingService = {
     employees = employeesMock,
     modules = modulesMock,
     rules = rulesMock,
+    assignments = schedulingAssignmentsMock,
+    planningDate,
+    planningShift = "manana",
+    weekStartDate,
   }: {
     employeeId: string;
     moduleId: string;
     employees?: Employee[];
     modules?: CareModule[];
     rules?: Rule[];
+    assignments?: ShiftAssignment[];
+    planningDate?: string;
+    planningShift?: ShiftKind;
+    weekStartDate?: string;
   }): Promise<AssignmentValidationResult> {
     const result = evaluateAssignment({
       employeeId,
@@ -36,6 +62,10 @@ export const schedulingService = {
       employees,
       modules,
       rules,
+      assignments,
+      planningDate,
+      planningShift,
+      weekStartDate,
     });
 
     return apiClient.simulate(result, 80);
@@ -44,10 +74,18 @@ export const schedulingService = {
     employees = employeesMock,
     modules = modulesMock,
     rules = rulesMock,
+    assignments = schedulingAssignmentsMock,
+    planningDate,
+    planningShift = "manana",
+    weekStartDate,
   }: {
     employees?: Employee[];
     modules?: CareModule[];
     rules?: Rule[];
+    assignments?: ShiftAssignment[];
+    planningDate?: string;
+    planningShift?: ShiftKind;
+    weekStartDate?: string;
   }): Promise<PublicationSimulationResult> {
     const activeRules = rules.filter((rule) => rule.enabled);
     const blockedRuleCodes = new Set<string>();
@@ -69,13 +107,30 @@ export const schedulingService = {
       }
 
       assignedEmployees.forEach((employee) => {
-        if (activeRules.some((rule) => rule.code === "R-HRD-07") && employee.weeklyHours >= 44) {
+        const weekStats = getEmployeeWeekStats({
+          employeeId: employee.id,
+          assignments,
+          weekStartDate: weekStartDate ?? getWeekStartDate(planningDate ?? new Date().toISOString().slice(0, 10)),
+        });
+        const hasSameDayLoad = Boolean(planningDate && hasWorkingAssignmentOnDate(employee.id, assignments, planningDate));
+
+        if (activeRules.some((rule) => rule.code === "R-HRD-07") && weekStats.totalHours > 36) {
           blockedRuleCodes.add("R-HRD-07");
           affectedModuleIds.add(module.id);
         }
 
-        if ((activeRules.some((rule) => rule.code === "R-HRD-03") || activeRules.some((rule) => rule.code === "R-HRD-05")) && employee.assignedToday) {
+        if ((activeRules.some((rule) => rule.code === "R-HRD-03") || activeRules.some((rule) => rule.code === "R-HRD-05")) && hasSameDayLoad) {
           blockedRuleCodes.add(activeRules.some((rule) => rule.code === "R-HRD-03") ? "R-HRD-03" : "R-HRD-05");
+          affectedModuleIds.add(module.id);
+        }
+
+        if (activeRules.some((rule) => rule.code === "R-HRD-09") && weekStats.workingDays.size >= 7) {
+          blockedRuleCodes.add("R-HRD-09");
+          affectedModuleIds.add(module.id);
+        }
+
+        if (activeRules.some((rule) => rule.code === "R-HRD-06") && weekStats.nightShifts > 2) {
+          blockedRuleCodes.add("R-HRD-06");
           affectedModuleIds.add(module.id);
         }
 
@@ -84,12 +139,12 @@ export const schedulingService = {
           affectedModuleIds.add(module.id);
         }
 
-        if (activeRules.some((rule) => rule.code === "R-BLD-02") && employee.weeklyHours >= 40) {
+        if (activeRules.some((rule) => rule.code === "R-BLD-02") && weekStats.totalHours >= 32) {
           warningRuleCodes.add("R-BLD-02");
           affectedModuleIds.add(module.id);
         }
 
-        if (activeRules.some((rule) => rule.code === "R-BLD-03") && employee.assignedToday) {
+        if (activeRules.some((rule) => rule.code === "R-BLD-03") && weekStats.nightShifts >= 2 && isNightShift(planningShift)) {
           warningRuleCodes.add("R-BLD-03");
           affectedModuleIds.add(module.id);
         }
@@ -133,25 +188,60 @@ export const schedulingService = {
     modules = modulesMock,
     rules = rulesMock,
     targetModuleId,
+    onlyEmptyModules = false,
+    onlyHighRiskModules = false,
+    assignments: weeklyAssignments = schedulingAssignmentsMock,
+    planningDate,
+    planningShift = "manana",
+    weekStartDate,
   }: {
     employees?: Employee[];
     modules?: CareModule[];
     rules?: Rule[];
     targetModuleId?: string;
+    onlyEmptyModules?: boolean;
+    onlyHighRiskModules?: boolean;
+    assignments?: ShiftAssignment[];
+    planningDate?: string;
+    planningShift?: ShiftKind;
+    weekStartDate?: string;
   }) {
+    if (planningShift === "descanso_remunerado") {
+      return {
+        modules,
+        assignments: [],
+        skipped: modules
+          .filter((module) => !targetModuleId || module.id === targetModuleId)
+          .map((module) => ({
+            moduleId: module.id,
+            moduleName: module.name,
+            reason: "El descanso remunerado no se autoasigna como cobertura por dependencia.",
+          })),
+      };
+    }
+
     let workingModules = modules.map((module) => ({
       ...module,
       assignedEmployeeIds: [...module.assignedEmployeeIds],
     }));
-    const assignments: Array<{ employeeId: string; employeeName: string; moduleId: string; moduleName: string; score: number }> = [];
+    const appliedAssignments: Array<{ employeeId: string; employeeName: string; moduleId: string; moduleName: string; score: number }> = [];
     const skipped: Array<{ moduleId: string; moduleName: string; reason: string }> = [];
 
     const prioritizedModules = [...workingModules]
       .filter((module) => !targetModuleId || module.id === targetModuleId)
+      .filter((module) => !onlyEmptyModules || module.assignedEmployeeIds.length === 0)
+      .filter((module) => {
+        if (!onlyHighRiskModules) {
+          return true;
+        }
+
+        const assignedEmployees = employees.filter((employee) => module.assignedEmployeeIds.includes(employee.id));
+        return getMockModuleRisk(module, assignedEmployees, rules).level === "high";
+      })
       .sort((left, right) => {
-      const leftGap = left.capacity - left.assignedEmployeeIds.length;
-      const rightGap = right.capacity - right.assignedEmployeeIds.length;
-      return rightGap - leftGap;
+        const leftGap = left.capacity - left.assignedEmployeeIds.length;
+        const rightGap = right.capacity - right.assignedEmployeeIds.length;
+        return rightGap - leftGap;
       });
 
     prioritizedModules.forEach((module) => {
@@ -163,7 +253,7 @@ export const schedulingService = {
           .filter((employee) => !occupiedIds.has(employee.id))
           .map((employee) => ({
             employee,
-            score: getMockAssignmentScore(employee, module, rules),
+            score: getMockAssignmentScore(employee, module, rules, weeklyAssignments, planningDate, planningShift),
           }))
           .sort((left, right) => right.score - left.score);
 
@@ -174,6 +264,10 @@ export const schedulingService = {
             employees,
             modules: workingModules,
             rules,
+            assignments: weeklyAssignments,
+            planningDate,
+            planningShift,
+            weekStartDate,
           }).valid,
         );
 
@@ -195,7 +289,7 @@ export const schedulingService = {
             : item,
         );
 
-        assignments.push({
+        appliedAssignments.push({
           employeeId: nextCandidate.employee.id,
           employeeName: nextCandidate.employee.fullName,
           moduleId: module.id,
@@ -209,27 +303,56 @@ export const schedulingService = {
 
     return {
       modules: workingModules,
-      assignments,
+      assignments: appliedAssignments,
       skipped,
     };
   },
 };
 
-export function getMockAssignmentScore(employee: Employee, module: CareModule, rules: Rule[] = rulesMock) {
+export function getMockAssignmentScore(
+  employee: Employee,
+  module: CareModule,
+  rules: Rule[] = rulesMock,
+  assignments: ShiftAssignment[] = schedulingAssignmentsMock,
+  planningDate?: string,
+  planningShift: ShiftKind = "manana",
+) {
   const activeRuleCodes = new Set(rules.filter((rule) => rule.enabled).map((rule) => rule.code));
+  const weekStats = getEmployeeWeekStats({
+    employeeId: employee.id,
+    assignments,
+    weekStartDate: getWeekStartDate(planningDate ?? new Date().toISOString().slice(0, 10)),
+  });
   const requiredMatches = module.requiredSkills.filter((skill) => employee.skills.includes(skill)).length;
   const skillScore = Math.min(70, requiredMatches * 35);
-  const workloadPenalty = employee.weeklyHours >= 40 ? 12 : employee.weeklyHours >= 32 ? 6 : 0;
+  const workloadPenalty = weekStats.totalHours >= 40 ? 12 : weekStats.totalHours >= 32 ? 6 : 0;
   const statusPenalty = employee.status === "busy" ? 8 : employee.status === "off" ? 25 : 0;
   const compatibilityBonus = employee.moduleIds.includes(module.id) ? 18 : employee.moduleIds.some((id) => id !== module.id) ? 8 : 0;
   const rulesBonus = activeRuleCodes.has("R-HRD-12") && employee.moduleIds.includes(module.id) ? 8 : 0;
   const rulesPenalty =
-    (activeRuleCodes.has("R-HRD-07") && employee.weeklyHours >= 40 ? 8 : 0) +
-    (activeRuleCodes.has("R-HRD-03") && employee.assignedToday ? 12 : 0) +
-    (activeRuleCodes.has("R-BLD-02") && employee.weeklyHours >= 40 ? 6 : 0) +
+    (activeRuleCodes.has("R-HRD-07") && weekStats.totalHours >= 40 ? 8 : 0) +
+    (activeRuleCodes.has("R-HRD-03") && planningDate && hasWorkingAssignmentOnDate(employee.id, assignments, planningDate) ? 12 : 0) +
+    (activeRuleCodes.has("R-HRD-06") && isNightShift(planningShift) && weekStats.nightShifts >= 2 ? 18 : 0) +
+    (activeRuleCodes.has("R-HRD-09") && weekStats.workingDays.size >= 6 ? 10 : 0) +
+    (activeRuleCodes.has("R-BLD-02") && weekStats.totalHours >= 40 ? 6 : 0) +
     (activeRuleCodes.has("R-BLD-01") && employee.status === "busy" ? 6 : 0);
 
   return Math.max(35, Math.min(99, 50 + skillScore + compatibilityBonus + rulesBonus - workloadPenalty - statusPenalty - rulesPenalty));
+}
+
+export function isEmployeeCompatibleWithModule(employee: Employee, module: CareModule) {
+  const normalizedRole = `${employee.roleLabel} ${employee.profile}`.toLowerCase();
+  const matchesRole =
+    employee.moduleIds.includes(module.id) ||
+    normalizedRole.includes(module.area.toLowerCase()) ||
+    normalizedRole.includes(module.name.toLowerCase());
+  const matchesSkill = module.requiredSkills.length === 0 || module.requiredSkills.some((skill) => employee.skills.includes(skill));
+
+  return {
+    matchesRole,
+    matchesSkill,
+    compatible: matchesRole || matchesSkill,
+  };
 }
 
 export function getHoverAssignmentPreview(
@@ -237,6 +360,9 @@ export function getHoverAssignmentPreview(
   module: CareModule,
   modules: CareModule[],
   rules: Rule[] = rulesMock,
+  assignments: ShiftAssignment[] = schedulingAssignmentsMock,
+  planningDate?: string,
+  planningShift: ShiftKind = "manana",
 ): HoverAssignmentPreview {
   const sourceModule = modules.find((item) => item.assignedEmployeeIds.includes(employee.id));
   const advisoryRuleCodes = getAdvisoryRuleCodes(employee, module, sourceModule, rules);
@@ -245,7 +371,7 @@ export function getHoverAssignmentPreview(
   return {
     employeeName: employee.fullName,
     moduleName: module.name,
-    score: getMockAssignmentScore(employee, module, rules),
+    score: getMockAssignmentScore(employee, module, rules, assignments, planningDate, planningShift),
     riskLevel: risk.level,
     riskHint: risk.reasons[0],
     advisoryRuleCodes,
@@ -264,6 +390,102 @@ export function getMockModuleScore(module: CareModule, assignedEmployees: Employ
   );
 
   return Math.round((occupancyScore + fitAverage) / 2);
+}
+
+export function buildModulesForPlanningSlice({
+  modules,
+  assignments,
+  planningDate,
+  planningShift,
+}: {
+  modules: CareModule[];
+  assignments: ShiftAssignment[];
+  planningDate: string;
+  planningShift: ShiftKind;
+}) {
+  return modules.map((module) => ({
+    ...module,
+    shiftLabel: getShiftLabel(planningShift),
+    assignedEmployeeIds: assignments
+      .filter((assignment) => assignment.moduleId === module.id && assignment.date === planningDate && assignment.shift === planningShift)
+      .map((assignment) => assignment.employeeId),
+  }));
+}
+
+export function getModuleDailyShiftSummary({
+  moduleId,
+  assignments,
+  planningDate,
+}: {
+  moduleId: string;
+  assignments: ShiftAssignment[];
+  planningDate: string;
+}): ShiftBucketSummary[] {
+  const shifts: ShiftKind[] = ["manana", "tarde", "noche", "noche_larga", "descanso_remunerado"];
+
+  return shifts.map((shift) => ({
+    shift,
+    employeeIds: assignments
+      .filter((assignment) => assignment.moduleId === moduleId && assignment.date === planningDate && assignment.shift === shift)
+      .map((assignment) => assignment.employeeId),
+    count: assignments.filter((assignment) => assignment.moduleId === moduleId && assignment.date === planningDate && assignment.shift === shift).length,
+  }));
+}
+
+export function applyIncidentsToPlanningSlice({
+  modules,
+  incidents,
+  planningDate,
+  planningShift,
+}: {
+  modules: CareModule[];
+  incidents: Incident[];
+  planningDate: string;
+  planningShift: ShiftKind;
+}) {
+  const activeImpacts = incidents.filter(
+    (incident) =>
+      incident.status !== "resuelta" &&
+      incident.employeeId &&
+      incident.moduleId &&
+      incident.date === planningDate &&
+      incident.shift === planningShift,
+  );
+
+  if (activeImpacts.length === 0) {
+    return modules;
+  }
+
+  return modules.map((module) => {
+    const blockedEmployeeIds = activeImpacts
+      .filter((incident) => incident.moduleId === module.id)
+      .map((incident) => incident.employeeId);
+
+    if (blockedEmployeeIds.length === 0) {
+      return module;
+    }
+
+    return {
+      ...module,
+      assignedEmployeeIds: module.assignedEmployeeIds.filter((employeeId) => !blockedEmployeeIds.includes(employeeId)),
+    };
+  });
+}
+
+export function getPlanningWeekDays(weekStartDate: string) {
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = addDays(weekStartDate, index);
+    const label = new Date(`${date}T00:00:00`).toLocaleDateString("es-CO", {
+      weekday: "short",
+      day: "numeric",
+    });
+
+    return { date, label };
+  });
+}
+
+export function getPlanningWeekStartDate(date: string) {
+  return getWeekStartDate(date);
 }
 
 export function getMockModuleRisk(module: CareModule, assignedEmployees: Employee[], rules: Rule[] = rulesMock) {
@@ -341,6 +563,61 @@ export function getMockSlotRisk(employee: Employee | null, module: CareModule, r
     level,
     reasons,
   };
+}
+
+export function getInvalidAssignedEmployeeIdsForModule({
+  module,
+  employees,
+  rules = rulesMock,
+  assignments = schedulingAssignmentsMock,
+  planningDate,
+  planningShift = "manana",
+  weekStartDate,
+}: {
+  module: CareModule;
+  employees: Employee[];
+  rules?: Rule[];
+  assignments?: ShiftAssignment[];
+  planningDate?: string;
+  planningShift?: ShiftKind;
+  weekStartDate?: string;
+}) {
+  return module.assignedEmployeeIds.filter((employeeId) => {
+    const employee = employees.find((item) => item.id === employeeId);
+
+    if (!employee) {
+      return true;
+    }
+
+    const activeRuleCodes = new Set(rules.filter((rule) => rule.enabled).map((rule) => rule.code));
+    const weekStats = getEmployeeWeekStats({
+      employeeId,
+      assignments,
+      weekStartDate: weekStartDate ?? getWeekStartDate(planningDate ?? new Date().toISOString().slice(0, 10)),
+    });
+    const compatibility = isEmployeeCompatibleWithModule(employee, module);
+
+    if (activeRuleCodes.has("R-HRD-12") && !compatibility.matchesRole) {
+      return true;
+    }
+    if (activeRuleCodes.has("R-HRD-13") && !compatibility.matchesSkill) {
+      return true;
+    }
+    if (activeRuleCodes.has("R-HRD-14") && employee.status === "off") {
+      return true;
+    }
+    if (activeRuleCodes.has("R-HRD-07") && weekStats.totalHours > 36) {
+      return true;
+    }
+    if (activeRuleCodes.has("R-HRD-06") && isNightShift(planningShift) && weekStats.nightShifts > 2) {
+      return true;
+    }
+    if (activeRuleCodes.has("R-HRD-09") && weekStats.compensatoryDays === 0) {
+      return true;
+    }
+
+    return false;
+  });
 }
 
 export function getSoftRuleInsights({
@@ -449,12 +726,20 @@ function evaluateAssignment({
   employees = employeesMock,
   modules = modulesMock,
   rules = rulesMock,
+  assignments = schedulingAssignmentsMock,
+  planningDate,
+  planningShift = "manana",
+  weekStartDate,
 }: {
   employeeId: string;
   moduleId: string;
   employees?: Employee[];
   modules?: CareModule[];
   rules?: Rule[];
+  assignments?: ShiftAssignment[];
+  planningDate?: string;
+  planningShift?: ShiftKind;
+  weekStartDate?: string;
 }): AssignmentValidationResult {
   const employee = employees.find((item) => item.id === employeeId);
   const module = modules.find((item) => item.id === moduleId);
@@ -478,12 +763,19 @@ function evaluateAssignment({
   }
 
   const assignedModule = modules.find((item) => item.assignedEmployeeIds.includes(employeeId));
-  const normalizedRole = `${employee.roleLabel} ${employee.profile}`.toLowerCase();
-  const matchesRole =
-    employee.moduleIds.includes(module.id) ||
-    normalizedRole.includes(module.area.toLowerCase()) ||
-    normalizedRole.includes(module.name.toLowerCase());
-  const matchesSkill = module.requiredSkills.some((skill) => employee.skills.includes(skill));
+  const effectiveWeekStart = weekStartDate ?? getWeekStartDate(planningDate ?? new Date().toISOString().slice(0, 10));
+  const weekStats = getEmployeeWeekStats({
+    employeeId,
+    assignments,
+    weekStartDate: effectiveWeekStart,
+  });
+  const alreadyAssignedInCurrentSlice = Boolean(assignedModule);
+  const projectedHours = weekStats.totalHours + (alreadyAssignedInCurrentSlice ? 0 : getShiftDurationHours(planningShift));
+  const hasSameDayWorkload = Boolean(planningDate && hasWorkingAssignmentOnDate(employeeId, assignments, planningDate));
+  const hasSameDayRest = Boolean(planningDate && hasRestAssignmentOnDate(employeeId, assignments, planningDate));
+  const compatibility = isEmployeeCompatibleWithModule(employee, module);
+  const matchesRole = compatibility.matchesRole;
+  const matchesSkill = compatibility.matchesSkill;
 
   if (activeRuleCodes.has("R-HRD-12") && !matchesRole) {
     return {
@@ -509,7 +801,7 @@ function evaluateAssignment({
     };
   }
 
-  if (activeRuleCodes.has("R-HRD-07") && employee.weeklyHours >= 44) {
+  if (activeRuleCodes.has("R-HRD-07") && projectedHours > 36) {
     return {
       valid: false,
       reason: "R-HRD-07 bloquea la asignacion: el colaborador ya alcanzo el limite semanal de horas del contrato.",
@@ -517,7 +809,15 @@ function evaluateAssignment({
     };
   }
 
-  if ((activeRuleCodes.has("R-HRD-03") || activeRuleCodes.has("R-HRD-05")) && employee.assignedToday && !assignedModule) {
+  if (planningShift === "descanso_remunerado" && hasSameDayWorkload && !alreadyAssignedInCurrentSlice) {
+    return {
+      valid: false,
+      reason: "No se puede programar descanso remunerado el mismo día en que el colaborador ya tiene cobertura asistencial.",
+      violatedRuleCodes: ["R-HRD-09"],
+    };
+  }
+
+  if ((activeRuleCodes.has("R-HRD-03") || activeRuleCodes.has("R-HRD-05")) && hasSameDayWorkload && !assignedModule) {
     return {
       valid: false,
       reason: "Las reglas R-HRD-03 y R-HRD-05 bloquean la asignacion por descanso minimo entre turnos.",
@@ -525,9 +825,40 @@ function evaluateAssignment({
     };
   }
 
+  if (planningShift !== "descanso_remunerado" && hasSameDayRest) {
+    return {
+      valid: false,
+      reason: "El colaborador ya tiene un compensatorio asignado para este día y no debe cubrir un turno adicional.",
+      violatedRuleCodes: ["R-HRD-09"],
+    };
+  }
+
+  if (activeRuleCodes.has("R-HRD-06") && isNightShift(planningShift) && weekStats.nightShifts >= 2) {
+    return {
+      valid: false,
+      reason: "R-HRD-06 bloquea la asignacion: el colaborador ya alcanzó el máximo semanal de dos turnos nocturnos.",
+      violatedRuleCodes: ["R-HRD-06"],
+    };
+  }
+
+  if (activeRuleCodes.has("R-HRD-09")) {
+    const nextWorkingDays = new Set(weekStats.workingDays);
+    if (planningDate) {
+      nextWorkingDays.add(planningDate);
+    }
+
+    if (nextWorkingDays.size >= 7) {
+      return {
+        valid: false,
+        reason: "R-HRD-09 bloquea la asignacion: el colaborador debe conservar al menos un dia compensatorio en la semana.",
+        violatedRuleCodes: ["R-HRD-09"],
+      };
+    }
+  }
+
   const advisoryRuleCodes = getAdvisoryRuleCodes(employee, module, assignedModule, activeRules);
   const appliedRuleCodes = activeRules
-    .filter((rule) => ["R-HRD-01", "R-HRD-12", "R-HRD-13", "R-HRD-14", "R-HRD-07", "R-HRD-03", "R-HRD-05"].includes(rule.code))
+    .filter((rule) => ["R-HRD-01", "R-HRD-12", "R-HRD-13", "R-HRD-14", "R-HRD-07", "R-HRD-03", "R-HRD-05", "R-HRD-06", "R-HRD-09"].includes(rule.code))
     .map((rule) => rule.code);
 
   return {
@@ -535,4 +866,341 @@ function evaluateAssignment({
     appliedRuleCodes,
     advisoryRuleCodes,
   };
+}
+
+export function getEmployeeWeekStats({
+  employeeId,
+  assignments,
+  weekStartDate,
+}: {
+  employeeId: string;
+  assignments: ShiftAssignment[];
+  weekStartDate: string;
+}) {
+  const weekDays = new Set(getPlanningWeekDays(weekStartDate).map((day) => day.date));
+  const relevantAssignments = assignments.filter(
+    (assignment) => assignment.employeeId === employeeId && weekDays.has(assignment.date),
+  );
+
+  return {
+    totalAssignments: relevantAssignments.filter((assignment) => assignment.shift !== "descanso_remunerado").length,
+    totalHours: relevantAssignments.reduce((sum, assignment) => sum + getShiftDurationHours(assignment.shift), 0),
+    nightShifts: relevantAssignments.filter((assignment) => isNightShift(assignment.shift)).length,
+    workingDays: new Set(
+      relevantAssignments
+        .filter((assignment) => assignment.shift !== "descanso_remunerado")
+        .map((assignment) => assignment.date),
+    ),
+    compensatoryDays: Math.max(0, 7 - new Set(relevantAssignments.filter((assignment) => assignment.shift !== "descanso_remunerado").map((assignment) => assignment.date)).size),
+  };
+}
+
+function hasWorkingAssignmentOnDate(employeeId: string, assignments: ShiftAssignment[], date: string) {
+  return assignments.some(
+    (assignment) =>
+      assignment.employeeId === employeeId &&
+      assignment.date === date &&
+      assignment.shift !== "descanso_remunerado",
+  );
+}
+
+function hasRestAssignmentOnDate(employeeId: string, assignments: ShiftAssignment[], date: string) {
+  return assignments.some(
+    (assignment) =>
+      assignment.employeeId === employeeId &&
+      assignment.date === date &&
+      assignment.shift === "descanso_remunerado",
+  );
+}
+
+export function buildWeeklyCopilotInsights({
+  employees,
+  assignments,
+  weekStartDate,
+}: {
+  employees: Employee[];
+  assignments: ShiftAssignment[];
+  weekStartDate: string;
+}): AIInsight[] {
+  const now = new Date().toISOString();
+  const missingCompensatory = employees
+    .map((employee) => ({
+      employee,
+      stats: getEmployeeWeekStats({
+        employeeId: employee.id,
+        assignments,
+        weekStartDate,
+      }),
+    }))
+    .filter(({ stats }) => stats.compensatoryDays === 0)
+    .slice(0, 3);
+
+  const nightLimitEmployees = employees
+    .map((employee) => ({
+      employee,
+      stats: getEmployeeWeekStats({
+        employeeId: employee.id,
+        assignments,
+        weekStartDate,
+      }),
+    }))
+    .filter(({ stats }) => stats.nightShifts >= 2)
+    .slice(0, 3);
+
+  const insights: AIInsight[] = [];
+  const overloadedEmployees = employees
+    .map((employee) => ({
+      employee,
+      stats: getEmployeeWeekStats({
+        employeeId: employee.id,
+        assignments,
+        weekStartDate,
+      }),
+    }))
+    .filter(({ stats }) => stats.totalHours > 36)
+    .slice(0, 3);
+
+  if (missingCompensatory.length > 0) {
+    insights.push({
+      id: `week-comp-${weekStartDate}`,
+      title: "Compensatorio semanal comprometido",
+      message: `${missingCompensatory.map(({ employee }) => employee.fullName).join(", ")} ya no tienen día compensatorio libre en la semana activa.`,
+      severity: "critical",
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
+  if (nightLimitEmployees.length > 0) {
+    insights.push({
+      id: `week-night-${weekStartDate}`,
+      title: "Límite nocturno en vigilancia",
+      message: `${nightLimitEmployees.map(({ employee }) => employee.fullName).join(", ")} ya alcanzaron 2 turnos nocturnos semanales.`,
+      severity: "warning",
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
+  if (overloadedEmployees.length > 0) {
+    insights.push({
+      id: `week-hours-${weekStartDate}`,
+      title: "Horas semanales excedidas",
+      message: `${overloadedEmployees.map(({ employee }) => employee.fullName).join(", ")} superan las 36h semanales y no deberían recibir más cobertura.`,
+      severity: "critical",
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
+  return insights;
+}
+
+export function buildLocalizedIncidentImpacts({
+  incidents,
+  modules,
+  employees,
+  rules = rulesMock,
+  assignments = schedulingAssignmentsMock,
+  planningDate,
+  planningShift,
+  weekStartDate,
+}: {
+  incidents: Incident[];
+  modules: CareModule[];
+  employees: Employee[];
+  rules?: Rule[];
+  assignments?: ShiftAssignment[];
+  planningDate: string;
+  planningShift: ShiftKind;
+  weekStartDate: string;
+}) {
+  const impacts: LocalizedIncidentImpact[] = [];
+
+  incidents
+    .filter(
+      (incident) =>
+        incident.status !== "resuelta" &&
+        incident.employeeId &&
+        incident.date === planningDate &&
+        incident.shift === planningShift,
+    )
+    .forEach((incident) => {
+      const employee = employees.find((item) => item.id === incident.employeeId);
+      const moduleId =
+        incident.moduleId ??
+        assignments.find(
+          (assignment) =>
+            assignment.employeeId === incident.employeeId &&
+            assignment.date === planningDate &&
+            assignment.shift === planningShift,
+        )?.moduleId;
+      const module = modules.find((item) => item.id === moduleId);
+
+      if (!employee || !module) {
+        return;
+      }
+
+      const removedHours = getShiftDurationHours(planningShift);
+      const requiresReplacement = module.assignedEmployeeIds.length < module.capacity;
+      const replacementSuggestions = requiresReplacement
+        ? buildIncidentReplacementSuggestions({
+            incident,
+            module,
+            employees,
+            rules,
+            modules,
+            assignments,
+            planningDate,
+            planningShift,
+            weekStartDate,
+            removedHours,
+          })
+        : [];
+
+      impacts.push({
+        incidentId: incident.id,
+        incidentKind: incident.kind,
+        moduleId: module.id,
+        moduleName: module.name,
+        employeeId: employee.id,
+        employeeName: employee.fullName,
+        date: planningDate,
+        shift: planningShift,
+        severity: incident.severity,
+        summary: incident.summary,
+        removedHours,
+        requiresReplacement,
+        replacementSuggestions,
+      });
+    });
+
+  return impacts;
+}
+
+function buildIncidentReplacementSuggestions({
+  incident,
+  module,
+  employees,
+  rules,
+  modules,
+  assignments,
+  planningDate,
+  planningShift,
+  weekStartDate,
+  removedHours,
+}: {
+  incident: Incident;
+  module: CareModule;
+  employees: Employee[];
+  rules: Rule[];
+  modules: CareModule[];
+  assignments: ShiftAssignment[];
+  planningDate: string;
+  planningShift: ShiftKind;
+  weekStartDate: string;
+  removedHours: number;
+}) {
+  const occupiedIds = new Set(modules.flatMap((item) => item.assignedEmployeeIds));
+  const suggestions: IncidentReplacementSuggestion[] = [];
+
+  employees
+    .filter((employee) => employee.id !== incident.employeeId)
+    .filter((employee) => employee.status === "available")
+    .filter((employee) => !occupiedIds.has(employee.id))
+    .filter((employee) => {
+      const stats = getEmployeeWeekStats({
+        employeeId: employee.id,
+        assignments,
+        weekStartDate,
+      });
+      return stats.totalHours + removedHours <= 36;
+    })
+    .forEach((employee) => {
+      const validation = evaluateAssignment({
+        employeeId: employee.id,
+        moduleId: module.id,
+        employees,
+        modules,
+        rules,
+        assignments,
+        planningDate,
+        planningShift,
+        weekStartDate,
+      });
+
+      if (!validation.valid) {
+        return;
+      }
+
+      const score = getMockAssignmentScore(employee, module, rules, assignments, planningDate, planningShift);
+
+      const stats = getEmployeeWeekStats({
+        employeeId: employee.id,
+        assignments,
+        weekStartDate,
+      });
+
+      suggestions.push({
+        employeeId: employee.id,
+        employeeName: employee.fullName,
+        moduleId: module.id,
+        moduleName: module.name,
+        score,
+        currentWeeklyHours: stats.totalHours,
+        projectedWeeklyHours: stats.totalHours + removedHours,
+        reason: `${module.area} compatible, mantiene el ajuste en el contexto afectado y queda en ${stats.totalHours + removedHours}h semanales.`,
+        violatedRuleCodes: [],
+        advisoryRuleCodes: validation.advisoryRuleCodes ?? [],
+      });
+    });
+
+  return suggestions
+    .sort((left, right) => right.score - left.score)
+    .slice(0, 5);
+}
+
+function getWeekStartDate(date: string) {
+  const baseDate = new Date(`${date}T00:00:00`);
+  const day = baseDate.getDay();
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  baseDate.setDate(baseDate.getDate() + mondayOffset);
+  return baseDate.toISOString().slice(0, 10);
+}
+
+function addDays(date: string, days: number) {
+  const nextDate = new Date(`${date}T00:00:00`);
+  nextDate.setDate(nextDate.getDate() + days);
+  return nextDate.toISOString().slice(0, 10);
+}
+
+function getShiftLabel(shift: ShiftKind) {
+  if (shift === "manana") {
+    return "Turno mañana";
+  }
+  if (shift === "tarde") {
+    return "Turno tarde";
+  }
+  if (shift === "noche") {
+    return "Turno noche";
+  }
+  if (shift === "noche_larga") {
+    return "Turno noche larga";
+  }
+  return "Descanso remunerado";
+}
+
+function isNightShift(shift: ShiftKind) {
+  return shift === "noche" || shift === "noche_larga";
+}
+
+function getShiftDurationHours(shift: ShiftKind) {
+  if (shift === "descanso_remunerado") {
+    return 0;
+  }
+  if (shift === "noche_larga") {
+    return 12;
+  }
+
+  return 8;
 }

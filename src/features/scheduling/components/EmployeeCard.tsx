@@ -14,6 +14,7 @@ export function EmployeeCard({
   dragHandle,
   highlightLabel,
   highlighted = false,
+  weeklySummary,
 }: {
   employee: Employee;
   compact?: boolean;
@@ -21,6 +22,11 @@ export function EmployeeCard({
   dragHandle?: ReactNode;
   highlightLabel?: string;
   highlighted?: boolean;
+  weeklySummary?: {
+    assignedShifts: number;
+    nightShifts: number;
+    compensatoryDays: number;
+  };
 }) {
   const statusConfig = getStatusConfig(employee.status);
   const recentShifts = getRecentShiftHistory(employee);
@@ -69,6 +75,16 @@ export function EmployeeCard({
             </Badge>
           ))}
         </div>
+
+        {weeklySummary ? (
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="secondary">{weeklySummary.assignedShifts} turnos semana</Badge>
+            <Badge variant={weeklySummary.nightShifts >= 2 ? "warning" : "info"}>{weeklySummary.nightShifts} noches</Badge>
+            <Badge variant={weeklySummary.compensatoryDays > 0 ? "success" : "danger"}>
+              {weeklySummary.compensatoryDays > 0 ? `${weeklySummary.compensatoryDays} comp.` : "Sin compensatorio"}
+            </Badge>
+          </div>
+        ) : null}
 
         <div className="rounded-2xl bg-slate-50/90 px-3 py-3">
           <div className="flex items-center justify-between gap-3">

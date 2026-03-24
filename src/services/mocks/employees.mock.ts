@@ -83,58 +83,7 @@ const baseEmployees: Employee[] = [
   },
 ];
 
-const generatedEmployeeNames = [
-  "Andrea Lozano",
-  "Mateo Cardenas",
-  "Valentina Duarte",
-  "Sergio Beltran",
-  "Laura Quintana",
-  "Daniela Rojas",
-  "Julian Montoya",
-  "Mariana Forero",
-  "Felipe Correa",
-  "Sara Ospina",
-  "Carlos Bernal",
-  "Tatiana Vega",
-  "Sebastian Rueda",
-  "Paola Jimenez",
-  "Andres Buitrago",
-  "Nicolas Vargas",
-  "Adriana Pulido",
-  "Juan Camilo Rios",
-  "Luisa Fernanda Melo",
-  "David Ariza",
-  "Carolina Prieto",
-  "Miguel Parra",
-  "Sofia Tellez",
-  "Kevin Murillo",
-  "Diana Trujillo",
-  "Cristian Salas",
-  "Ana Maria Garzon",
-  "Oscar Fajardo",
-  "Melissa Carrillo",
-  "Esteban Pineda",
-  "Monica Calderon",
-  "Camilo Valencia",
-  "Yulieth Castro",
-  "Ricardo Leon",
-  "Sandra Villamil",
-  "Alejandro Pinzon",
-  "Jessica Mendez",
-  "Henry Cabrera",
-  "Katherine Naranjo",
-  "Fernando Galindo",
-  "Patricia Montero",
-  "Mauricio Neira",
-  "Natalia Pineda",
-  "Jhonatan Sierra",
-  "Claudia Figueroa",
-  "Diego Avellaneda",
-  "Angela Romero",
-  "Ivonne Morales",
-  "Mauricio Acosta",
-  "Pilar Chaparro",
-];
+const generatedEmployeeNames = buildGeneratedNames(100);
 
 const generatedRoleTemplates = [
   {
@@ -169,7 +118,6 @@ const generatedRoleTemplates = [
   },
 ];
 
-const generatedStatuses: Employee["status"][] = ["available", "available", "available", "busy", "off"];
 const avatarPool = [
   "/avatars/paula-medina.svg",
   "/avatars/luis-herrera.svg",
@@ -180,7 +128,6 @@ const avatarPool = [
 
 const generatedEmployees: Employee[] = generatedEmployeeNames.map((fullName, index) => {
   const template = generatedRoleTemplates[index % generatedRoleTemplates.length];
-  const status = generatedStatuses[(index * 2 + Math.floor(index / generatedRoleTemplates.length)) % generatedStatuses.length];
   const employeeNumber = index + 6;
 
   return {
@@ -194,11 +141,50 @@ const generatedEmployees: Employee[] = generatedEmployeeNames.map((fullName, ind
     skills: template.skills,
     moduleIds: template.moduleIds,
     weeklyHours: 30 + (index % 4) * 4,
-    assignedToday: status === "busy",
-    status,
+    assignedToday: false,
+    status: "available",
     createdAt: "2026-03-10T08:00:00.000Z",
     updatedAt: "2026-03-22T12:00:00.000Z",
   };
 });
 
 export const employeesMock: Employee[] = [...baseEmployees, ...generatedEmployees];
+
+function buildGeneratedNames(total: number) {
+  const firstNames = [
+    "Andrea",
+    "Mateo",
+    "Valentina",
+    "Sergio",
+    "Laura",
+    "Daniela",
+    "Julian",
+    "Mariana",
+    "Felipe",
+    "Sara",
+    "Carlos",
+    "Tatiana",
+    "Sebastian",
+    "Paola",
+    "Andres",
+    "Nicolas",
+    "Adriana",
+    "Juan Camilo",
+    "Luisa Fernanda",
+    "David",
+  ];
+  const lastNames = [
+    "Lozano",
+    "Cardenas",
+    "Duarte",
+    "Beltran",
+    "Quintana",
+    "Rojas",
+    "Forero",
+    "Correa",
+    "Ospina",
+    "Bernal",
+  ];
+
+  return firstNames.flatMap((firstName) => lastNames.map((lastName) => `${firstName} ${lastName}`)).slice(0, total);
+}

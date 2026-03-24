@@ -9,7 +9,13 @@ export interface ShiftAssignment extends BaseEntity {
   valid: boolean;
 }
 
-export type ShiftKind = "manana" | "tarde" | "noche";
+export type ShiftKind = "manana" | "tarde" | "noche" | "noche_larga" | "descanso_remunerado";
+
+export interface ShiftBucketSummary {
+  shift: ShiftKind;
+  count: number;
+  employeeIds: EntityId[];
+}
 
 export interface AssignmentValidationResult {
   valid: boolean;
@@ -30,6 +36,7 @@ export interface PublicationSimulationResult {
 
 export interface PublicationVersion extends BaseEntity {
   versionLabel: string;
+  plannedDate: string;
   shift: ShiftKind;
   publishedBy: string;
   status: "pendiente" | "aprobada";
@@ -56,6 +63,35 @@ export interface HoverAssignmentPreview {
   riskLevel: "none" | "low" | "medium" | "high";
   riskHint?: string;
   advisoryRuleCodes: string[];
+}
+
+export interface IncidentReplacementSuggestion {
+  employeeId: EntityId;
+  employeeName: string;
+  moduleId: EntityId;
+  moduleName: string;
+  score: number;
+  currentWeeklyHours: number;
+  projectedWeeklyHours: number;
+  reason: string;
+  violatedRuleCodes: string[];
+  advisoryRuleCodes: string[];
+}
+
+export interface LocalizedIncidentImpact {
+  incidentId: EntityId;
+  incidentKind: "incapacidad" | "ausencia" | "permiso";
+  moduleId: EntityId;
+  moduleName: string;
+  employeeId: EntityId;
+  employeeName: string;
+  date: string;
+  shift: ShiftKind;
+  severity: "media" | "alta" | "critica";
+  summary: string;
+  removedHours: number;
+  requiresReplacement: boolean;
+  replacementSuggestions: IncidentReplacementSuggestion[];
 }
 
 export interface PublishedModuleSnapshot

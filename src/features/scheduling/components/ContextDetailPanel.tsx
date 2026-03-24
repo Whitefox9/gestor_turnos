@@ -1,8 +1,15 @@
-import { CircleCheckBig, ShieldAlert, Workflow } from "lucide-react";
+import { CircleCheckBig, ShieldAlert, UserRoundX, Workflow } from "lucide-react";
 import { Badge } from "@/shared/components/ui/badge";
+import { Button } from "@/shared/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/shared/components/ui/card";
 import type { Rule } from "@/shared/types/rule.types";
-import type { AuditEntry, HoverAssignmentPreview, PublicationSimulationResult, PublicationVersion } from "@/shared/types/scheduling.types";
+import type {
+  AuditEntry,
+  HoverAssignmentPreview,
+  LocalizedIncidentImpact,
+  PublicationSimulationResult,
+  PublicationVersion,
+} from "@/shared/types/scheduling.types";
 
 export function ContextDetailPanel({
   feedback,
@@ -11,6 +18,11 @@ export function ContextDetailPanel({
   publicationVersions,
   auditEntries,
   hoverPreview,
+  incidentImpacts,
+  selectedIncidentImpact,
+  onSelectIncidentImpact,
+  onApplySuggestedReplacement,
+  onManualAdjustment,
 }: {
   feedback: { tone: "success" | "error"; message: string; ruleCodes?: string[]; advisoryRuleCodes?: string[]; details?: string[] } | null;
   activeRules: Rule[];
@@ -18,6 +30,11 @@ export function ContextDetailPanel({
   publicationVersions?: PublicationVersion[];
   auditEntries?: AuditEntry[];
   hoverPreview?: HoverAssignmentPreview | null;
+  incidentImpacts?: LocalizedIncidentImpact[];
+  selectedIncidentImpact?: LocalizedIncidentImpact | null;
+  onSelectIncidentImpact?: (incidentId: string) => void;
+  onApplySuggestedReplacement?: (incidentId: string, employeeId: string) => void;
+  onManualAdjustment?: (incidentId: string) => void;
 }) {
   const hardRules = activeRules.filter((rule) => rule.ruleType === "dura");
   const softRules = activeRules.filter((rule) => rule.ruleType === "blanda");
@@ -66,6 +83,96 @@ export function ContextDetailPanel({
           </div>
           <p className="mt-3">Se validan cobertura, rol, competencias, disponibilidad, horas y descansos según el rulebook activo.</p>
         </div>
+
+        {incidentImpacts?.length ? (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-900">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 font-semibold">
+                <UserRoundX className="h-4 w-4 text-amber-600" />
+                Incidencias localizadas
+              </div>
+              <Badge variant="warning">{incidentImpacts.length} activas</Badge>
+            </div>
+            <div className="mt-3 space-y-2">
+              {incidentImpacts.map((impact) => (
+                <button
+                  key={impact.incidentId}
+                  type="button"
+                  className={`w-full rounded-xl border px-3 py-3 text-left transition ${
+                    selectedIncidentImpact?.incidentId === impact.incidentId
+                      ? "border-amber-300 bg-white"
+                      : "border-amber-200/70 bg-white/70"
+                  }`}
+                  onClick={() => onSelectIncidentImpact?.(impact.incidentId)}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="font-medium text-slate-800">{impact.moduleName}</p>
+                    <Badge variant={impact.severity === "critica" ? "danger" : impact.severity === "alta" ? "warning" : "info"}>
+                      {impact.incidentKind}
+                    </Badge>
+                  </div>
+                  <p className="mt-1 text-sm text-slate-600">
+                    {impact.employeeName} se retira de {impact.shift}. {impact.requiresReplacement ? "Se requiere reemplazo puntual." : "La cobertura ya quedó estabilizada."}
+                  </p>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {selectedIncidentImpact ? (
+          <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-rose-900">
+            <p className="font-semibold">Impacto localizado</p>
+            <p className="mt-2 text-sm">
+              {selectedIncidentImpact.employeeName} sale de {selectedIncidentImpact.moduleName} el {selectedIncidentImpact.date} en {selectedIncidentImpact.shift}.
+            </p>
+            <p className="mt-2 text-sm">
+              Se liberan {selectedIncidentImpact.removedHours}h y se conserva el resto de la programación sin cambios en cascada.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Badge variant="danger">{selectedIncidentImpact.moduleName}</Badge>
+              <Badge variant="warning">{selectedIncidentImpact.shift}</Badge>
+              <Badge variant="secondary">
+                {selectedIncidentImpact.requiresReplacement ? "Reemplazo pendiente" : "Cobertura restablecida"}
+              </Badge>
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Button variant="outline" size="sm" onClick={() => onManualAdjustment?.(selectedIncidentImpact.incidentId)}>
+                Ajuste manual
+              </Button>
+            </div>
+            {selectedIncidentImpact.replacementSuggestions.length > 0 ? (
+              <div className="mt-4 space-y-2">
+                {selectedIncidentImpact.replacementSuggestions.slice(0, 3).map((suggestion) => (
+                  <div key={`${selectedIncidentImpact.incidentId}-${suggestion.employeeId}`} className="rounded-xl border border-rose-200/70 bg-white px-3 py-3 text-sm text-slate-700">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="font-medium text-slate-900">{suggestion.employeeName}</p>
+                      <Badge variant="info">Fit {suggestion.score}</Badge>
+                    </div>
+                    <p className="mt-2 text-slate-600">{suggestion.reason}</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Badge variant="secondary">Horas actuales {suggestion.currentWeeklyHours}</Badge>
+                      <Badge variant="secondary">Queda en {suggestion.projectedWeeklyHours}h</Badge>
+                      <Badge variant={suggestion.violatedRuleCodes.length === 0 ? "success" : "danger"}>
+                        {suggestion.violatedRuleCodes.length === 0 ? "Reglas OK" : "Con bloqueo"}
+                      </Badge>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Button
+                        size="sm"
+                        onClick={() => onApplySuggestedReplacement?.(selectedIncidentImpact.incidentId, suggestion.employeeId)}
+                      >
+                        Aplicar reemplazo
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-4 text-sm text-rose-800">No hay reemplazos elegibles inmediatos sin superar 36h o romper reglas duras.</p>
+            )}
+          </div>
+        ) : null}
 
         {highlightedRules.length > 0 ? (
           <div className="rounded-2xl bg-slate-50 p-4">

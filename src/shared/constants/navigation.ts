@@ -1,4 +1,4 @@
-import { LayoutDashboard, Building2, CalendarRange, ClipboardList, History, Stethoscope, UsersRound, ShieldCheck } from "lucide-react";
+import { LayoutDashboard, Building2, CalendarRange, ClipboardList, History, Stethoscope, UsersRound, ShieldCheck, Boxes } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { ROUTES } from "./routes";
 import type { UserRole } from "../types/common.types";
@@ -34,6 +34,12 @@ export const NAVIGATION_ITEMS: NavigationItem[] = [
     path: ROUTES.plannerPeople,
     icon: UsersRound,
     roles: ["planificador", "coordinador", "admin_institucional"],
+  },
+  {
+    label: "Dependencias",
+    path: ROUTES.plannerDependencies,
+    icon: Boxes,
+    roles: ["admin_institucional"],
   },
   {
     label: "Reglas",

@@ -15,6 +15,7 @@ const MySchedulePage = lazy(() => import("@/pages/employee/MySchedulePage").then
 const ControlCenterPage = lazy(() => import("@/pages/planner/ControlCenterPage").then((module) => ({ default: module.ControlCenterPage })));
 const IncidentsPage = lazy(() => import("@/pages/planner/IncidentsPage").then((module) => ({ default: module.IncidentsPage })));
 const PeoplePage = lazy(() => import("@/pages/planner/PeoplePage").then((module) => ({ default: module.PeoplePage })));
+const DependenciesPage = lazy(() => import("@/pages/planner/DependenciesPage").then((module) => ({ default: module.DependenciesPage })));
 const PublicationHistoryPage = lazy(() => import("@/pages/planner/PublicationHistoryPage").then((module) => ({ default: module.PublicationHistoryPage })));
 const RulesPage = lazy(() => import("@/pages/planner/RulesPage").then((module) => ({ default: module.RulesPage })));
 const SchedulingPage = lazy(() => import("@/pages/planner/SchedulingPage").then((module) => ({ default: module.SchedulingPage })));
@@ -50,6 +51,7 @@ export const routes: RouteObject[] = [
                   { path: ROUTES.plannerScheduling, element: <LoadablePage><SchedulingPage /></LoadablePage> },
                   { path: ROUTES.plannerIncidents, element: <LoadablePage><IncidentsPage /></LoadablePage> },
                   { path: ROUTES.plannerPeople, element: <LoadablePage><PeoplePage /></LoadablePage> },
+                  { path: ROUTES.plannerDependencies, element: <LoadablePage><DependenciesPage /></LoadablePage> },
                   { path: ROUTES.plannerPublications, element: <LoadablePage><PublicationHistoryPage /></LoadablePage> },
                   { path: ROUTES.plannerRules, element: <LoadablePage><RulesPage /></LoadablePage> },
                 ],

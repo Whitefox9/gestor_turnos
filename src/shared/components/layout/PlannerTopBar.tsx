@@ -1,4 +1,4 @@
-import { AlertTriangle, CalendarRange, CheckCheck, ClipboardList, Send, Sparkles, WandSparkles, UsersRound } from "lucide-react";
+import { AlertTriangle, CalendarRange, CheckCheck, ClipboardList, RotateCcw, Send, Sparkles, WandSparkles, UsersRound } from "lucide-react";
 import { Badge } from "@/shared/components/ui/badge";
 import { Button } from "@/shared/components/ui/button";
 import { Card } from "@/shared/components/ui/card";
@@ -15,7 +15,11 @@ interface PlannerTopBarProps {
   actionMessage?: string;
   actionTone?: "success" | "error" | "neutral";
   onValidateRules?: () => void;
+  onResetAssignments?: () => void;
   onAutoAssign?: () => void;
+  onAutoAssignEmptyOnly?: () => void;
+  onClearInvalidSlots?: () => void;
+  onAutoAssignHighRisk?: () => void;
   onSimulate?: () => void;
   onPublish?: () => void;
   isSimulating?: boolean;
@@ -33,7 +37,11 @@ export function PlannerTopBar({
   actionMessage,
   actionTone = "neutral",
   onValidateRules,
+  onResetAssignments,
   onAutoAssign,
+  onAutoAssignEmptyOnly,
+  onClearInvalidSlots,
+  onAutoAssignHighRisk,
   onSimulate,
   onPublish,
   isSimulating = false,
@@ -93,9 +101,25 @@ export function PlannerTopBar({
               <CheckCheck className="h-4 w-4" />
               Validar reglas
             </Button>
+            <Button variant="outline" onClick={onResetAssignments} disabled={isSimulating}>
+              <RotateCcw className="h-4 w-4" />
+              Devolver todo
+            </Button>
             <Button variant="outline" onClick={onAutoAssign} disabled={isSimulating}>
               <WandSparkles className="h-4 w-4" />
               Autoasignar
+            </Button>
+            <Button variant="outline" onClick={onAutoAssignEmptyOnly} disabled={isSimulating}>
+              <Sparkles className="h-4 w-4" />
+              Autoasignar vacios
+            </Button>
+            <Button variant="outline" onClick={onClearInvalidSlots} disabled={isSimulating}>
+              <RotateCcw className="h-4 w-4" />
+              Vaciar invalidos
+            </Button>
+            <Button variant="outline" onClick={onAutoAssignHighRisk} disabled={isSimulating}>
+              <WandSparkles className="h-4 w-4" />
+              Autoasignar criticos
             </Button>
             <Button variant="outline" onClick={onSimulate} disabled={isSimulating}>
               <Sparkles className="h-4 w-4" />

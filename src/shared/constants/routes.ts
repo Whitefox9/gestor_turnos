@@ -5,6 +5,7 @@ export const ROUTES = {
   plannerScheduling: "/planner/programacion",
   plannerIncidents: "/planner/novedades",
   plannerPeople: "/planner/personas",
+  plannerDependencies: "/planner/dependencias",
   plannerRules: "/planner/reglas",
   plannerPublications: "/planner/publicaciones",
   employeeSchedule: "/empleado/mi-horario",

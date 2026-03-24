@@ -4,10 +4,11 @@ import { GripVertical } from "lucide-react";
 import type { Employee } from "@/shared/types/employee.types";
 import type { CareModule } from "@/shared/types/module.types";
 import type { Rule } from "@/shared/types/rule.types";
+import type { ShiftAssignment, ShiftKind } from "@/shared/types/scheduling.types";
 import { Button } from "@/shared/components/ui/button";
 import { cn } from "@/shared/utils/cn";
 import { EmployeeCard } from "./EmployeeCard";
-import { getMockAssignmentScore, getMockSlotRisk } from "../services/scheduling.service";
+import { getEmployeeWeekStats, getMockAssignmentScore, getMockSlotRisk, isEmployeeCompatibleWithModule } from "../services/scheduling.service";
 
 export function DraggableEmployeeCard({
   employee,
@@ -15,12 +16,20 @@ export function DraggableEmployeeCard({
   activeRules,
   highlightLabel,
   onQuickAssign,
+  weeklyAssignments,
+  weekStartDate,
+  planningDate,
+  planningShift,
 }: {
   employee: Employee;
   modules: CareModule[];
   activeRules: Rule[];
   highlightLabel?: string;
   onQuickAssign: (employeeId: string, moduleId: string) => void;
+  weeklyAssignments: ShiftAssignment[];
+  weekStartDate: string;
+  planningDate: string;
+  planningShift: ShiftKind;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: employee.id,
@@ -31,11 +40,9 @@ export function DraggableEmployeeCard({
   });
   const moduleOptions = modules
     .map((module) => {
-      const score = getMockAssignmentScore(employee, module, activeRules);
+      const score = getMockAssignmentScore(employee, module, activeRules, weeklyAssignments, planningDate, planningShift);
       const risk = getMockSlotRisk(employee, module, activeRules);
-      const isCompatible =
-        employee.moduleIds.includes(module.id) ||
-        module.requiredSkills.some((skill) => employee.skills.includes(skill));
+      const isCompatible = isEmployeeCompatibleWithModule(employee, module).compatible;
 
       return {
         module,
@@ -52,6 +59,11 @@ export function DraggableEmployeeCard({
     });
   const suggestedModules = moduleOptions.filter((entry) => entry.isCompatible).slice(0, 2);
   const [selectedModuleId, setSelectedModuleId] = useState<string>(moduleOptions[0]?.module.id ?? "");
+  const weeklySummary = getEmployeeWeekStats({
+    employeeId: employee.id,
+    assignments: weeklyAssignments,
+    weekStartDate,
+  });
 
   useEffect(() => {
     if (!moduleOptions.some((entry) => entry.module.id === selectedModuleId)) {
@@ -72,6 +84,11 @@ export function DraggableEmployeeCard({
         compact
         highlighted={Boolean(highlightLabel)}
         highlightLabel={highlightLabel}
+        weeklySummary={{
+          assignedShifts: weeklySummary.totalAssignments,
+          nightShifts: weeklySummary.nightShifts,
+          compensatoryDays: weeklySummary.compensatoryDays,
+        }}
         dragHandle={
           <Button
             variant="ghost"

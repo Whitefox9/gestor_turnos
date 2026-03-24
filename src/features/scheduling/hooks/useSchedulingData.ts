@@ -1,11 +1,13 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuthStore } from "@/app/store/auth.store";
+import { useModuleCatalogStore } from "@/app/store/module-catalog.store";
 import { useUIStore } from "@/app/store/ui.store";
-import { schedulingService } from "../services/scheduling.service";
+import { isEmployeeCompatibleWithModule, schedulingService } from "../services/scheduling.service";
 
 export function useSchedulingData() {
   const tenantId = useAuthStore((state) => state.session?.user.tenantId);
+  const modules = useModuleCatalogStore((state) => state.modules).filter((module) => !tenantId || module.tenantId === tenantId);
   const search = useUIStore((state) => state.schedulingSearch);
   const targetFilter = useUIStore((state) => state.schedulingTargetFilter);
 
@@ -16,7 +18,6 @@ export function useSchedulingData() {
 
   const filteredEmployees = useMemo(() => {
     const employees = query.data?.employees ?? [];
-    const modules = query.data?.modules ?? [];
     const normalized = search.trim().toLowerCase();
     const selectedModule = modules.find((module) => module.id === targetFilter);
 
@@ -34,13 +35,18 @@ export function useSchedulingData() {
         return true;
       }
 
-      return employee.moduleIds.includes(selectedModule.id) ||
-        selectedModule.requiredSkills.some((skill) => employee.skills.includes(skill));
+      return isEmployeeCompatibleWithModule(employee, selectedModule).compatible;
     });
-  }, [query.data?.employees, query.data?.modules, search, targetFilter]);
+  }, [query.data?.employees, modules, search, targetFilter]);
 
   return {
     ...query,
+    data: query.data
+      ? {
+          ...query.data,
+          modules,
+        }
+      : query.data,
     filteredEmployees,
   };
 }

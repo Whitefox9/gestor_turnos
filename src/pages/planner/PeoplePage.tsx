@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { UsersRound } from "lucide-react";
+import { useModuleCatalogStore } from "@/app/store/module-catalog.store";
 import { useEmployees } from "@/features/employees/hooks/useEmployees";
-import { modulesMock } from "@/services/mocks/modules.mock";
 import { LoadingState } from "@/shared/components/feedback/LoadingState";
 import { Avatar } from "@/shared/components/ui/avatar";
 import { Badge } from "@/shared/components/ui/badge";
@@ -11,6 +11,7 @@ import { PageHeader } from "@/shared/components/layout/PageHeader";
 
 export function PeoplePage() {
   const { data, isLoading } = useEmployees();
+  const modules = useModuleCatalogStore((state) => state.modules);
   const [search, setSearch] = useState("");
   const [dependencyFilter, setDependencyFilter] = useState("all");
   const [skillFilter, setSkillFilter] = useState("all");
@@ -66,7 +67,7 @@ export function PeoplePage() {
             label="Dependencia"
             value={dependencyFilter}
             onChange={setDependencyFilter}
-            options={[{ value: "all", label: "Todas" }, ...modulesMock.map((module) => ({ value: module.id, label: module.name }))]}
+            options={[{ value: "all", label: "Todas" }, ...modules.map((module) => ({ value: module.id, label: module.name }))]}
           />
           <FilterSelect
             label="Skill"

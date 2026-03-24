@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { ArrowRightLeft, Download, History, Megaphone, ShieldCheck, ShieldX, Trash2 } from "lucide-react";
 import { usePlanningHistoryStore } from "@/app/store/planning-history.store";
+import { getPlanningWeekStartDate } from "@/features/scheduling/services/scheduling.service";
 import { employeesMock } from "@/services/mocks/employees.mock";
 import { EmptyState } from "@/shared/components/feedback/EmptyState";
 import { Badge } from "@/shared/components/ui/badge";
@@ -57,6 +58,41 @@ export function PublicationHistoryPage() {
       }),
     }));
   }, [selectedVersion]);
+  const weeklyPublicationSummary = useMemo(() => {
+    if (publicationVersions.length === 0) {
+      return [];
+    }
+
+    const grouped = new Map<
+      string,
+      {
+        weekStart: string;
+        slices: typeof publicationVersions;
+      }
+    >();
+
+    publicationVersions.forEach((version) => {
+      const weekStart = getPlanningWeekStartDate(version.plannedDate);
+      const current = grouped.get(weekStart);
+      if (current) {
+        current.slices.push(version);
+        return;
+      }
+
+      grouped.set(weekStart, {
+        weekStart,
+        slices: [version],
+      });
+    });
+
+    return Array.from(grouped.values())
+      .map((group) => ({
+        ...group,
+        slices: group.slices.sort((left, right) => `${left.plannedDate}-${left.shift}`.localeCompare(`${right.plannedDate}-${right.shift}`)),
+        assignedEmployees: new Set(group.slices.flatMap((slice) => slice.modulesSnapshot.flatMap((module) => module.assignedEmployeeIds))).size,
+      }))
+      .sort((left, right) => right.weekStart.localeCompare(left.weekStart));
+  }, [publicationVersions]);
 
   function handleApproveSelectedVersion() {
     if (!selectedVersion || selectedVersion.status === "aprobada") {
@@ -81,6 +117,7 @@ export function PublicationHistoryPage() {
 
     const rows = [
       ["Version", selectedVersion.versionLabel],
+      ["Fecha", selectedVersion.plannedDate],
       ["Turno", selectedVersion.shift],
       ["Estado", selectedVersion.status],
       ["Responsable", selectedVersion.publishedBy],
@@ -101,7 +138,7 @@ export function PublicationHistoryPage() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `${selectedVersion.versionLabel}-${selectedVersion.shift}.csv`;
+    link.download = `${selectedVersion.versionLabel}-${selectedVersion.plannedDate}-${selectedVersion.shift}.csv`;
     link.click();
     URL.revokeObjectURL(url);
   }
@@ -138,7 +175,7 @@ export function PublicationHistoryPage() {
           <CardContent className="flex flex-col gap-3 p-5 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <p className="font-semibold text-slate-900">
-                {selectedVersion.versionLabel} · {selectedVersion.shift}
+                {selectedVersion.versionLabel} · {selectedVersion.plannedDate} · {selectedVersion.shift}
               </p>
               <p className="mt-1 text-sm text-slate-500">
                 Estado {selectedVersion.status}. Desde aquí puedes aprobar, exportar y notificar.
@@ -202,7 +239,7 @@ export function PublicationHistoryPage() {
                     </div>
                     <p className="mt-3 font-medium text-slate-900">{version.summary}</p>
                     <p className="mt-2 text-sm text-slate-500">
-                      Publicado por {version.publishedBy} el {formatDate(version.createdAt)}.
+                      Publicado por {version.publishedBy} el {formatDate(version.createdAt)} · planificado para {version.plannedDate}.
                     </p>
                     <div className="mt-3 flex flex-wrap gap-2">
                       {version.rulesUsed.slice(0, 8).map((ruleCode) => (
@@ -260,6 +297,51 @@ export function PublicationHistoryPage() {
           </CardContent>
         </Card>
       </section>
+
+      <Card className="border-slate-200 bg-white/95">
+        <CardContent className="space-y-4 p-5">
+          <div className="flex items-center gap-2 text-slate-900">
+            <History className="h-4 w-4 text-primary" />
+            <p className="font-semibold">Consolidado semanal</p>
+          </div>
+
+          {weeklyPublicationSummary.length === 0 ? (
+            <EmptyState
+              title="Sin consolidado"
+              description="Las slices aprobadas o pendientes de la semana aparecerán agrupadas aquí."
+            />
+          ) : (
+            <div className="space-y-4">
+              {weeklyPublicationSummary.map((week) => (
+                <div key={week.weekStart} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="info">Semana {week.weekStart}</Badge>
+                    <Badge variant="secondary">{week.slices.length} slices</Badge>
+                    <Badge variant="success">{week.assignedEmployees} colaboradores únicos</Badge>
+                  </div>
+                  <div className="mt-4 grid gap-3 lg:grid-cols-3">
+                    {week.slices.map((slice) => (
+                      <div key={slice.id} className="rounded-xl border border-slate-200 bg-white px-3 py-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="font-medium text-slate-900">{slice.plannedDate}</p>
+                          <Badge variant={slice.status === "aprobada" ? "success" : "warning"}>{slice.shift}</Badge>
+                        </div>
+                        <p className="mt-2 text-sm text-slate-600">{slice.summary}</p>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <Badge variant="secondary">{slice.moduleIds.length} módulos</Badge>
+                          <Badge variant="info">
+                            {slice.modulesSnapshot.reduce((sum, module) => sum + module.assignedEmployeeIds.length, 0)} asignaciones
+                          </Badge>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Card className="border-slate-200 bg-white/95">
         <CardContent className="space-y-4 p-5">

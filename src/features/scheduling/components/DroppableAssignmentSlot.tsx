@@ -16,6 +16,8 @@ export function DroppableAssignmentSlot({
   previewCandidateName,
   previewScore,
   previewAdvisoryCodes,
+  isSelected,
+  onSelect,
   action,
 }: {
   droppableId: string;
@@ -30,6 +32,8 @@ export function DroppableAssignmentSlot({
   previewCandidateName?: string;
   previewScore?: number;
   previewAdvisoryCodes?: string[];
+  isSelected?: boolean;
+  onSelect?: (targetId: string) => void;
   action?: ReactNode;
 }) {
   const { setNodeRef, isOver } = useDroppable({
@@ -39,13 +43,15 @@ export function DroppableAssignmentSlot({
   return (
     <div
       ref={setNodeRef}
+      onClick={() => onSelect?.(droppableId)}
       className={cn(
-        "rounded-2xl border border-slate-200 bg-slate-50/90 transition-all",
+        "cursor-pointer rounded-2xl border border-slate-200 bg-slate-50/90 transition-all",
         compact ? "px-3 py-2.5" : "px-4 py-3",
         riskLevel === "low" && "border-cyan-200 bg-cyan-50/60",
         riskLevel === "medium" && "border-amber-200 bg-amber-50/70",
         riskLevel === "high" && "border-rose-200 bg-rose-50/70",
         isOver && "border-primary bg-cyan-50 shadow-sm",
+        isSelected && "ring-2 ring-primary/20 border-primary bg-cyan-50/80",
         isSuccessful && "border-emerald-300 bg-emerald-50 animate-pulse shadow-sm",
         isReleased && "border-sky-300 bg-sky-50 shadow-sm ring-1 ring-sky-200",
       )}
