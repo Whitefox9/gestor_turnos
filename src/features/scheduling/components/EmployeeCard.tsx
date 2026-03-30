@@ -5,6 +5,7 @@ import { Avatar } from "@/shared/components/ui/avatar";
 import { Button } from "@/shared/components/ui/button";
 import { Card, CardContent } from "@/shared/components/ui/card";
 import type { Employee } from "@/shared/types/employee.types";
+import type { RestOperationalSignal } from "@/shared/types/scheduling.types";
 import { cn } from "@/shared/utils/cn";
 
 export function EmployeeCard({
@@ -15,6 +16,8 @@ export function EmployeeCard({
   highlightLabel,
   highlighted = false,
   weeklySummary,
+  contextSignals,
+  previousShiftLabel,
 }: {
   employee: Employee;
   compact?: boolean;
@@ -27,10 +30,14 @@ export function EmployeeCard({
     nightShifts: number;
     compensatoryDays: number;
   };
+  contextSignals?: RestOperationalSignal[];
+  previousShiftLabel?: string;
 }) {
   const statusConfig = getStatusConfig(employee.status);
   const recentShifts = getRecentShiftHistory(employee);
   const alerts = getOperationalSignals(employee);
+  const contextualAlerts = (contextSignals ?? []).map(mapContextSignalToAlert);
+  const mergedSignals = [...contextualAlerts, ...alerts];
 
   return (
     <Card className={cn("border-white/80 bg-white/95 shadow-sm", highlighted && "border-cyan-200 bg-cyan-50/40 ring-2 ring-cyan-100")}>
@@ -77,12 +84,17 @@ export function EmployeeCard({
         </div>
 
         {weeklySummary ? (
-          <div className="flex flex-wrap gap-2">
-            <Badge variant="secondary">{weeklySummary.assignedShifts} turnos semana</Badge>
-            <Badge variant={weeklySummary.nightShifts >= 2 ? "warning" : "info"}>{weeklySummary.nightShifts} noches</Badge>
-            <Badge variant={weeklySummary.compensatoryDays > 0 ? "success" : "danger"}>
-              {weeklySummary.compensatoryDays > 0 ? `${weeklySummary.compensatoryDays} comp.` : "Sin compensatorio"}
-            </Badge>
+          <div className="space-y-2">
+            <div className="flex flex-wrap gap-2">
+              <Badge variant="secondary">{weeklySummary.assignedShifts} turnos semana</Badge>
+              <Badge variant={weeklySummary.nightShifts >= 2 ? "warning" : "info"}>{weeklySummary.nightShifts} noches</Badge>
+              <Badge variant={weeklySummary.compensatoryDays > 0 ? "success" : "danger"}>
+                {weeklySummary.compensatoryDays > 0 ? `${weeklySummary.compensatoryDays} comp.` : "Sin compensatorio"}
+              </Badge>
+            </div>
+            <p className="text-xs font-medium text-slate-500">
+              Turno anterior: <span className="text-slate-700">{previousShiftLabel ?? "Sin turno previo"}</span>
+            </p>
           </div>
         ) : null}
 
@@ -105,10 +117,10 @@ export function EmployeeCard({
         </div>
 
         <div className="flex flex-wrap gap-2">
-          {alerts.length > 0 ? (
-            alerts.slice(0, compact ? 1 : 2).map((alert) => (
+          {mergedSignals.length > 0 ? (
+            mergedSignals.slice(0, compact ? 2 : 3).map((alert) => (
               <div
-                key={alert.label}
+                key={`${employee.id}-${alert.label}`}
                 className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${alert.className}`}
               >
                 {alert.icon}
@@ -197,6 +209,30 @@ function getOperationalSignals(employee: Employee) {
   }
 
   return signals;
+}
+
+function mapContextSignalToAlert(signal: RestOperationalSignal) {
+  return {
+    label: signal.label,
+    className:
+      signal.tone === "danger"
+        ? "bg-rose-50 text-rose-700"
+        : signal.tone === "warning"
+          ? "bg-amber-50 text-amber-700"
+          : signal.tone === "success"
+            ? "bg-emerald-50 text-emerald-700"
+            : "bg-sky-50 text-sky-700",
+    icon:
+      signal.code === "same_day_lock" ? (
+        <AlertTriangle className="h-3.5 w-3.5" />
+      ) : signal.code === "protected_post_night" ? (
+        <Clock3 className="h-3.5 w-3.5" />
+      ) : signal.code === "requires_compensatory" ? (
+        <ShieldAlert className="h-3.5 w-3.5" />
+      ) : (
+        <ShieldAlert className="h-3.5 w-3.5" />
+      ),
+  };
 }
 
 function getInitials(fullName: string) {

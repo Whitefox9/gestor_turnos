@@ -8,7 +8,14 @@ import type { ShiftAssignment, ShiftKind } from "@/shared/types/scheduling.types
 import { Button } from "@/shared/components/ui/button";
 import { cn } from "@/shared/utils/cn";
 import { EmployeeCard } from "./EmployeeCard";
-import { getEmployeeWeekStats, getMockAssignmentScore, getMockSlotRisk, isEmployeeCompatibleWithModule } from "../services/scheduling.service";
+import {
+  getEmployeeOperationalSignalsForContext,
+  getPreviousShiftByEmployee,
+  getEmployeeWeekStats,
+  getMockAssignmentScore,
+  getMockSlotRisk,
+  isEmployeeCompatibleWithModule,
+} from "../services/scheduling.service";
 
 export function DraggableEmployeeCard({
   employee,
@@ -63,6 +70,20 @@ export function DraggableEmployeeCard({
     employeeId: employee.id,
     assignments: weeklyAssignments,
     weekStartDate,
+    throughDate: planningDate,
+  });
+  const contextSignals = getEmployeeOperationalSignalsForContext({
+    employee,
+    assignments: weeklyAssignments,
+    planningDate,
+    planningShift,
+    weekStartDate,
+  });
+  const previousShift = getPreviousShiftByEmployee({
+    employeeId: employee.id,
+    assignments: weeklyAssignments,
+    planningDate,
+    planningShift,
   });
 
   useEffect(() => {
@@ -89,6 +110,8 @@ export function DraggableEmployeeCard({
           nightShifts: weeklySummary.nightShifts,
           compensatoryDays: weeklySummary.compensatoryDays,
         }}
+        previousShiftLabel={previousShift?.label ?? "Sin turno previo"}
+        contextSignals={contextSignals}
         dragHandle={
           <Button
             variant="ghost"

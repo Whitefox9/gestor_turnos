@@ -5,6 +5,7 @@ export interface CareModule extends BaseEntity {
   name: string;
   area: string;
   shiftLabel: string;
+  displayColor: string;
   capacity: number;
   assignedEmployeeIds: EntityId[];
   requiredSkills: string[];

@@ -12,6 +12,7 @@ import { Badge } from "@/shared/components/ui/badge";
 import { Button } from "@/shared/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/shared/components/ui/card";
 import { Input } from "@/shared/components/ui/input";
+import type { DailyRestOperationalSummary } from "@/shared/types/scheduling.types";
 
 export interface CopilotMetaItem {
   label: string;
@@ -50,6 +51,7 @@ export interface CopilotCase {
 
 export function AICopilotPanel({
   activeCase,
+  restSummary,
   onApplyPrimary,
   onCompareAlternatives,
   onSimulateImpact,
@@ -57,6 +59,7 @@ export function AICopilotPanel({
   onSubmitPrompt,
 }: {
   activeCase: CopilotCase | null;
+  restSummary?: DailyRestOperationalSummary | null;
   onApplyPrimary?: () => void;
   onCompareAlternatives?: () => void;
   onSimulateImpact?: () => void;
@@ -110,6 +113,7 @@ export function AICopilotPanel({
           <div className="rounded-xl bg-white px-2 py-2">3. Acción</div>
         </div>
         <AIContextSummary activeCase={activeCase} />
+        <AIRestRecommendations restSummary={restSummary} />
         <AIPrimaryRecommendation activeCase={activeCase} onApplyPrimary={onApplyPrimary} />
         <AIAlternativeList activeCase={activeCase} />
         <AIQuickActions
@@ -128,6 +132,41 @@ export function AICopilotPanel({
         />
       </CardContent>
     </Card>
+  );
+}
+
+function AIRestRecommendations({ restSummary }: { restSummary?: DailyRestOperationalSummary | null }) {
+  if (!restSummary) {
+    return null;
+  }
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-slate-50/90 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm font-semibold text-slate-700">Protección de descansos</p>
+        <Badge variant="secondary">{restSummary.assignedRestCount} libres hoy</Badge>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Badge variant="warning">{restSummary.requiresCompensatoryCount} requieren compensatorio</Badge>
+        <Badge variant="info">{restSummary.protectedPostNightCount} protegidos post noche</Badge>
+        <Badge variant="danger">{restSummary.sameDayLockCount} no deben tomar otra jornada</Badge>
+      </div>
+      {restSummary.recommendations.length > 0 ? (
+        <div className="mt-4 space-y-2">
+          {restSummary.recommendations.slice(0, 3).map((recommendation, index) => (
+            <div key={recommendation.employeeId} className="rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm">
+              <div className="flex items-center justify-between gap-3">
+                <p className="font-medium text-slate-900">{index + 1}. {recommendation.employeeName}</p>
+                <Badge variant={recommendation.tone === "danger" ? "danger" : recommendation.tone === "warning" ? "warning" : recommendation.tone === "success" ? "success" : "info"}>
+                  {recommendation.currentWeeklyHours}h
+                </Badge>
+              </div>
+              <p className="mt-2 text-slate-600">{recommendation.reason}</p>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

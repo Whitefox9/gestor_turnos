@@ -7,6 +7,7 @@ type ModuleDraft = {
   tenantId: string;
   name: string;
   area: string;
+  displayColor: string;
   capacity: number;
   requiredSkills: string[];
 };
@@ -30,6 +31,7 @@ export const useModuleCatalogStore = create<ModuleCatalogState>()(
           name: draft.name,
           area: draft.area,
           shiftLabel: "Turno mañana",
+          displayColor: draft.displayColor,
           capacity: draft.capacity,
           assignedEmployeeIds: [],
           requiredSkills: draft.requiredSkills,
@@ -50,7 +52,45 @@ export const useModuleCatalogStore = create<ModuleCatalogState>()(
     }),
     {
       name: "module-catalog",
+      version: 2,
       storage: createJSONStorage(() => localStorage),
+      migrate: (persistedState) => {
+        const state = persistedState as ModuleCatalogState | undefined;
+
+        if (!state?.modules?.length) {
+          return {
+            modules: modulesMock,
+          };
+        }
+
+        const dynamicModules = state.modules.filter((module) => module.id.startsWith("mod-dyn-"));
+
+        return {
+          modules: [
+            ...modulesMock,
+            ...dynamicModules.map((module) => ({
+              ...module,
+              displayColor: module.displayColor ?? getDefaultColorForArea(module.area),
+            })),
+          ],
+        };
+      },
     },
   ),
 );
+
+function getDefaultColorForArea(area: string) {
+  const normalized = area.toLowerCase();
+
+  if (normalized.includes("uci")) {
+    return "#19D5E8";
+  }
+  if (normalized.includes("inter")) {
+    return "#C7E6A3";
+  }
+  if (normalized.includes("hospital")) {
+    return "#F3E61D";
+  }
+
+  return "#D9E2EC";
+}

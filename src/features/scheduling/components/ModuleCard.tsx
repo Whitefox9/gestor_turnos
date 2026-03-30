@@ -1,18 +1,17 @@
 import type { ReactNode } from "react";
-import { BedDouble, Building, Dna, HeartPulse, ShieldCheck, Sparkles, Users2 } from "lucide-react";
+import { BedDouble, Building, HeartPulse, ShieldCheck, Sparkles, Stethoscope, Users2 } from "lucide-react";
 import { Badge } from "@/shared/components/ui/badge";
 import type { CareModule } from "@/shared/types/module.types";
 import type { Employee } from "@/shared/types/employee.types";
 import type { Rule } from "@/shared/types/rule.types";
 import type { HoverAssignmentPreview, LocalizedIncidentImpact, ShiftAssignment, ShiftKind } from "@/shared/types/scheduling.types";
 import { DroppableAssignmentSlot } from "./DroppableAssignmentSlot";
-import { getHoverAssignmentPreview, getMockAssignmentScore, getMockModuleRisk, getMockModuleScore, getMockSlotRisk, getModuleDailyShiftSummary } from "../services/scheduling.service";
+import { getHoverAssignmentPreview, getMockAssignmentScore, getMockModuleRisk, getMockModuleScore, getMockSlotRisk, getModuleDailyShiftSummary, getRestAssignmentReason } from "../services/scheduling.service";
 
 const areaIcons = {
   UCI: HeartPulse,
   Hospitalizacion: BedDouble,
-  Enfermeria: Building,
-  Biologia: Dna,
+  Intermedios: Stethoscope,
 };
 
 export function ModuleCard({
@@ -27,6 +26,7 @@ export function ModuleCard({
   planningDate,
   planningShift,
   weeklyAssignments,
+  weekStartDate,
   successTargetId,
   releasedTargetId,
   invalidAssignedEmployeeIds,
@@ -47,6 +47,7 @@ export function ModuleCard({
   planningDate: string;
   planningShift: ShiftKind;
   weeklyAssignments: ShiftAssignment[];
+  weekStartDate: string;
   successTargetId?: string | null;
   releasedTargetId?: string | null;
   invalidAssignedEmployeeIds: string[];
@@ -62,6 +63,12 @@ export function ModuleCard({
   const status =
     assignedEmployees.length === 0 ? "Sin cobertura" : occupancyRatio >= 1 ? "Cubierto" : "Cobertura parcial";
   const statusVariant = assignedEmployees.length === 0 ? "warning" : occupancyRatio >= 1 ? "success" : "info";
+  const assignmentState =
+    assignedEmployees.length === 0
+      ? "Pendiente por asignar"
+      : occupancyRatio >= 1
+        ? "Dependencia asignada completa"
+        : "Dependencia asignada parcialmente";
   const slots = Array.from({ length: module.capacity }, (_, index) => assignedEmployees[index] ?? null);
   const occupiedSlots = slots.filter(Boolean).length;
   const emptySlots = slots.length - occupiedSlots;
@@ -79,6 +86,8 @@ export function ModuleCard({
         }
       : entry,
   );
+  const assistanceShiftSummary = dailyShiftSummary.filter((entry) => entry.shift !== "descanso_remunerado");
+  const restShiftSummary = dailyShiftSummary.find((entry) => entry.shift === "descanso_remunerado");
   const employeesById = new Map(employees.map((employee) => [employee.id, employee]));
 
   return (
@@ -88,10 +97,11 @@ export function ModuleCard({
       }`}
       onClick={() => onSelectModule(module.id)}
     >
+      <div className="h-2 rounded-full" style={{ backgroundColor: module.displayColor }} />
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-3">
-            <div className="shrink-0 rounded-2xl bg-primary/10 p-3 text-primary">
+            <div className="shrink-0 rounded-2xl p-3" style={{ backgroundColor: `${module.displayColor}33`, color: "#0f172a" }}>
               <Icon className="h-5 w-5" />
             </div>
             <div className="min-w-0">
@@ -117,6 +127,15 @@ export function ModuleCard({
       </div>
 
       <div className="grid gap-3">
+        <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Estado de asignación</p>
+              <p className="mt-1 text-sm font-medium text-slate-800">{assignmentState}</p>
+            </div>
+            <Badge variant={statusVariant}>{assignedEmployees.length}/{module.capacity}</Badge>
+          </div>
+        </div>
         <SummaryMetric label="Cobertura" value={`${assignedEmployees.length}/${module.capacity}`} icon={<ShieldCheck className="h-4 w-4" />} />
         <SummaryMetric label="Turno" value={module.shiftLabel} icon={<Users2 className="h-4 w-4" />} />
         <SummaryMetric label="Score mock" value={`${moduleScore}`} icon={<Sparkles className="h-4 w-4" />} />
@@ -124,11 +143,11 @@ export function ModuleCard({
 
       <div className="space-y-2">
         <div className="flex items-center justify-between">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Jornadas del día</p>
-          <p className="text-xs text-slate-500">Edita otra franja sin salir del módulo</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Jornadas asistenciales del día</p>
+          <p className="text-xs text-slate-500">Convenciones: M · T · N · NL</p>
         </div>
-        <div className="grid grid-cols-5 gap-2">
-          {dailyShiftSummary.map((entry) => {
+        <div className="grid grid-cols-4 gap-2">
+          {assistanceShiftSummary.map((entry) => {
             const previewNames = entry.employeeIds
               .slice(0, 2)
               .map((employeeId) => employeesById.get(employeeId)?.fullName.split(" ")[0] ?? "N/A");
@@ -154,12 +173,10 @@ export function ModuleCard({
                     ? "T"
                     : entry.shift === "noche"
                       ? "N"
-                      : entry.shift === "noche_larga"
-                        ? "NL"
-                        : "DR"}
+                      : "NL"}
               </p>
               <p className="mt-1 text-sm font-semibold">
-                {entry.shift === "descanso_remunerado" ? entry.count : `${entry.count}/${module.capacity}`}
+                {`${entry.count}/${module.capacity}`}
               </p>
               <div className="mt-2 min-h-8 space-y-1">
                 {previewNames.length > 0 ? (
@@ -174,13 +191,38 @@ export function ModuleCard({
                     ) : null}
                   </>
                 ) : (
-                  <p className="text-[10px] leading-tight text-slate-400">
-                    {entry.shift === "descanso_remunerado" ? "Sin descanso" : "Sin cobertura"}
-                  </p>
+                  <p className="text-[10px] leading-tight text-slate-400">Sin cobertura</p>
                 )}
               </div>
             </button>
           )})}
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Descansos del día</p>
+              <p className="mt-1 text-sm font-medium text-slate-800">
+                {restShiftSummary?.count ?? 0} personas protegidas con libre o compensatorio
+              </p>
+            </div>
+            <Badge variant="secondary">{restShiftSummary?.count ?? 0}</Badge>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {restShiftSummary && restShiftSummary.employeeIds.length > 0 ? (
+              restShiftSummary.employeeIds.slice(0, 4).map((employeeId) => (
+                <span key={`${module.id}-rest-${employeeId}`} className="rounded-full bg-white px-3 py-1 text-xs text-slate-600">
+                  {employeesById.get(employeeId)?.fullName.split(" ").slice(0, 2).join(" ") ?? "N/A"}
+                </span>
+              ))
+            ) : (
+              <span className="text-xs text-slate-400">Todavía no hay descansos asignados para esta dependencia.</span>
+            )}
+            {restShiftSummary && restShiftSummary.employeeIds.length > 4 ? (
+              <span className="rounded-full bg-white px-3 py-1 text-xs text-slate-500">
+                +{restShiftSummary.employeeIds.length - 4} más
+              </span>
+            ) : null}
+          </div>
         </div>
       </div>
 
@@ -223,6 +265,14 @@ export function ModuleCard({
           {slots.map((employee, index) => {
             const slotRisk = getMockSlotRisk(employee, module, activeRules);
             const slotTargetId = `${module.id}::slot-${index}`;
+            const restReason =
+              planningShift === "descanso_remunerado" && employee
+                ? getRestAssignmentReason({
+                    employee,
+                    assignments: weeklyAssignments,
+                    weekStartDate,
+                  })
+                : null;
             const preview: HoverAssignmentPreview | null =
               previewEmployee && hoveredTargetId === slotTargetId
                 ? getHoverAssignmentPreview(previewEmployee, module, modules, activeRules)
@@ -239,7 +289,7 @@ export function ModuleCard({
                 isReleased={releasedTargetId === slotTargetId}
                 compact={!employee}
                 riskLevel={slotRisk.level}
-                riskHint={slotRisk.reasons[0]}
+                riskHint={restReason?.detail ?? slotRisk.reasons[0]}
                 previewCandidateName={preview?.employeeName}
                 previewScore={preview?.score}
                 previewAdvisoryCodes={preview?.advisoryRuleCodes}
@@ -256,20 +306,35 @@ export function ModuleCard({
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Personal asignado</p>
           <p className="text-sm text-slate-500">{assignedEmployees.length} resumido</p>
         </div>
-        {assignedEmployees.length > 0 ? (
-          <div className="flex flex-wrap gap-2">
-            {assignedEmployees.map((employee) => (
-              <div
-                key={employee.id}
-                className="flex items-center gap-2 rounded-2xl bg-slate-100 px-3 py-2 text-sm text-slate-700"
-              >
-                <span className="min-w-0 truncate">{employee.fullName}</span>
-                <Badge variant="info">Fit {getMockAssignmentScore(employee, module, activeRules)}</Badge>
-                {invalidAssignedEmployeeIds.includes(employee.id) ? <Badge variant="warning">Inválido</Badge> : null}
-              </div>
-            ))}
-          </div>
-        ) : (
+          {assignedEmployees.length > 0 ? (
+            <div className="flex flex-wrap gap-2">
+              {assignedEmployees.map((employee) => {
+                const restReason =
+                  planningShift === "descanso_remunerado"
+                    ? getRestAssignmentReason({
+                        employee,
+                        assignments: weeklyAssignments,
+                        weekStartDate,
+                      })
+                    : null;
+
+                return (
+                  <div
+                    key={employee.id}
+                    className="rounded-2xl bg-slate-100 px-3 py-2 text-sm text-slate-700"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="min-w-0 truncate">{employee.fullName}</span>
+                      <Badge variant="info">Fit {getMockAssignmentScore(employee, module, activeRules)}</Badge>
+                      {restReason ? <Badge variant={restReason.tone}>{restReason.label}</Badge> : null}
+                      {invalidAssignedEmployeeIds.includes(employee.id) ? <Badge variant="warning">Inválido</Badge> : null}
+                    </div>
+                    {restReason ? <p className="mt-2 text-xs text-slate-500">{restReason.detail}</p> : null}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
           <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm text-muted-foreground">
             Sin personal asignado todavía. El módulo queda listo para recibir colaboradores.
           </div>

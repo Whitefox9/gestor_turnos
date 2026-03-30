@@ -16,6 +16,7 @@ interface PlanningHistoryState {
   currentBoardSnapshot: PublishedModuleSnapshot[];
   currentPlanningShift: ShiftKind;
   currentPlanningDate: string;
+  activePlanningDependencyId: string | "all";
   weekStartDate: string;
   planningRangeStart: string;
   planningRangeEnd: string;
@@ -27,9 +28,11 @@ interface PlanningHistoryState {
   setCurrentBoardSnapshot: (snapshot: PublishedModuleSnapshot[]) => void;
   setPlanningDate: (date: string) => void;
   setPlanningShift: (shift: ShiftKind) => void;
+  setActivePlanningDependency: (dependencyId: string | "all") => void;
   setPlanningRange: (start: string, end: string) => void;
   hydrateWeeklyAssignments: (assignments: ShiftAssignment[]) => void;
   setSliceAssignments: (date: string, shift: ShiftKind, snapshot: PublishedModuleSnapshot[]) => void;
+  replaceWeeklyAssignments: (assignments: ShiftAssignment[]) => void;
   approvePublication: (versionId: string) => void;
   notifyEmployeesForPublication: (versionId: string) => void;
   clearHistory: () => void;
@@ -45,6 +48,7 @@ export const usePlanningHistoryStore = create<PlanningHistoryState>()(
       currentBoardSnapshot: [],
       currentPlanningShift: "manana",
       currentPlanningDate: initialWeekStart,
+      activePlanningDependencyId: "all",
       weekStartDate: initialWeekStart,
       planningRangeStart: initialWeekStart,
       planningRangeEnd: addDays(initialWeekStart, 6),
@@ -81,6 +85,10 @@ export const usePlanningHistoryStore = create<PlanningHistoryState>()(
       setPlanningShift: (shift) =>
         set({
           currentPlanningShift: shift,
+        }),
+      setActivePlanningDependency: (dependencyId) =>
+        set({
+          activePlanningDependencyId: dependencyId,
         }),
       setPlanningRange: (start, end) =>
         set((state) => ({
@@ -138,6 +146,10 @@ export const usePlanningHistoryStore = create<PlanningHistoryState>()(
           return {
             weeklyAssignments: [...preserved, ...nextAssignments],
           };
+        }),
+      replaceWeeklyAssignments: (assignments) =>
+        set({
+          weeklyAssignments: assignments,
         }),
       approvePublication: (versionId) =>
         set((state) => {
@@ -224,6 +236,7 @@ export const usePlanningHistoryStore = create<PlanningHistoryState>()(
           currentBoardSnapshot: [],
           currentPlanningShift: "manana",
           currentPlanningDate: initialWeekStart,
+          activePlanningDependencyId: "all",
           weekStartDate: initialWeekStart,
           planningRangeStart: initialWeekStart,
           planningRangeEnd: addDays(initialWeekStart, 6),

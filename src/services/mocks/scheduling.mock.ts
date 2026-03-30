@@ -4,7 +4,7 @@ export const schedulingAssignmentsMock: ShiftAssignment[] = [
   {
     id: "asg-001",
     employeeId: "emp-003",
-    moduleId: "mod-uci-a",
+    moduleId: "mod-uci-6",
     date: "2026-03-23",
     shift: "manana",
     valid: true,
@@ -14,7 +14,7 @@ export const schedulingAssignmentsMock: ShiftAssignment[] = [
   {
     id: "asg-002",
     employeeId: "emp-001",
-    moduleId: "mod-enf-a",
+    moduleId: "mod-hosp-7cd",
     date: "2026-03-23",
     shift: "tarde",
     valid: true,
@@ -24,7 +24,7 @@ export const schedulingAssignmentsMock: ShiftAssignment[] = [
   {
     id: "asg-003",
     employeeId: "emp-004",
-    moduleId: "mod-bio-a",
+    moduleId: "mod-int-4p",
     date: "2026-03-23",
     shift: "noche",
     valid: true,
@@ -34,7 +34,7 @@ export const schedulingAssignmentsMock: ShiftAssignment[] = [
   {
     id: "asg-004",
     employeeId: "emp-005",
-    moduleId: "mod-uci-a",
+    moduleId: "mod-uci-cor",
     date: "2026-03-23",
     shift: "noche_larga",
     valid: true,
@@ -44,7 +44,7 @@ export const schedulingAssignmentsMock: ShiftAssignment[] = [
   {
     id: "asg-005",
     employeeId: "emp-002",
-    moduleId: "mod-hosp-a",
+    moduleId: "mod-hosp-7ab",
     date: "2026-03-23",
     shift: "descanso_remunerado",
     valid: true,

@@ -8,7 +8,7 @@ import { Button } from "@/shared/components/ui/button";
 import { Card, CardContent } from "@/shared/components/ui/card";
 import { Input } from "@/shared/components/ui/input";
 
-const areaOptions = ["UCI", "Hospitalizacion", "Enfermeria", "Biologia", "Urgencias", "Imagenologia", "Farmacia"];
+const areaOptions = ["UCI", "Hospitalizacion", "Intermedios", "Urgencias", "Imagenologia", "Farmacia"];
 
 export function DependenciesPage() {
   const tenantId = useAuthStore((state) => state.session?.user.tenantId ?? "tenant-hsj");
@@ -19,6 +19,7 @@ export function DependenciesPage() {
   const [area, setArea] = useState(areaOptions[0]);
   const [capacity, setCapacity] = useState("6");
   const [skills, setSkills] = useState("");
+  const [displayColor, setDisplayColor] = useState(getDefaultColorForArea(areaOptions[0]));
 
   const summary = useMemo(
     () => ({
@@ -42,6 +43,7 @@ export function DependenciesPage() {
       tenantId,
       name: name.trim(),
       area,
+      displayColor,
       capacity: Math.max(1, Number(capacity) || 6),
       requiredSkills: parsedSkills.length > 0 ? parsedSkills : getDefaultSkillsForArea(area),
     });
@@ -50,6 +52,7 @@ export function DependenciesPage() {
     setArea(areaOptions[0]);
     setCapacity("6");
     setSkills("");
+    setDisplayColor(getDefaultColorForArea(areaOptions[0]));
   }
 
   return (
@@ -77,7 +80,10 @@ export function DependenciesPage() {
               <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Área</span>
               <select
                 value={area}
-                onChange={(event) => setArea(event.target.value)}
+                onChange={(event) => {
+                  setArea(event.target.value);
+                  setDisplayColor(getDefaultColorForArea(event.target.value));
+                }}
                 className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-primary focus:ring-2 focus:ring-cyan-100"
               >
                 {areaOptions.map((option) => (
@@ -89,6 +95,15 @@ export function DependenciesPage() {
             </label>
             <Input value={capacity} onChange={(event) => setCapacity(event.target.value)} placeholder="Capacidad base" />
             <Input value={skills} onChange={(event) => setSkills(event.target.value)} placeholder="Skills separadas por coma" />
+            <label className="space-y-2">
+              <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Color visible</span>
+              <input
+                type="color"
+                value={displayColor}
+                onChange={(event) => setDisplayColor(event.target.value)}
+                className="h-10 w-full rounded-xl border border-slate-200 bg-white px-2"
+              />
+            </label>
             <div className="md:col-span-2">
               <Button type="button" className="rounded-xl" onClick={handleCreate}>
                 <Plus className="h-4 w-4" />
@@ -110,9 +125,12 @@ export function DependenciesPage() {
             {modules.map((module) => (
               <div key={module.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <div className="flex items-center justify-between gap-3">
-                  <div>
+                  <div className="flex items-center gap-3">
+                    <div className="h-4 w-4 rounded-full border border-white shadow-sm" style={{ backgroundColor: module.displayColor }} />
+                    <div>
                     <p className="font-medium text-slate-900">{module.name}</p>
                     <p className="mt-1 text-sm text-slate-500">{module.area}</p>
+                    </div>
                   </div>
                   <Button type="button" variant="outline" className="rounded-xl" onClick={() => removeModule(module.id)}>
                     <Trash2 className="h-4 w-4" />
@@ -145,11 +163,8 @@ function getDefaultSkillsForArea(area: string) {
   if (normalized.includes("hospital")) {
     return ["hospitalizacion"];
   }
-  if (normalized.includes("enfer")) {
-    return ["medicacion"];
-  }
-  if (normalized.includes("biolog")) {
-    return ["biologia"];
+  if (normalized.includes("inter")) {
+    return ["intermedios", "monitorizacion"];
   }
   if (normalized.includes("urgenc")) {
     return ["triage"];
@@ -162,4 +177,29 @@ function getDefaultSkillsForArea(area: string) {
   }
 
   return [];
+}
+
+function getDefaultColorForArea(area: string) {
+  const normalized = area.toLowerCase();
+
+  if (normalized.includes("uci")) {
+    return "#19D5E8";
+  }
+  if (normalized.includes("inter")) {
+    return "#C7E6A3";
+  }
+  if (normalized.includes("hospital")) {
+    return "#F3E61D";
+  }
+  if (normalized.includes("urgenc")) {
+    return "#F8B84E";
+  }
+  if (normalized.includes("imagen")) {
+    return "#B4C7E7";
+  }
+  if (normalized.includes("farm")) {
+    return "#A7D6C5";
+  }
+
+  return "#D9E2EC";
 }

@@ -12,7 +12,7 @@ export const aiInsightsMock: AIInsight[] = [
   {
     id: "ai-002",
     title: "Cobertura prioritaria",
-    message: "Hospitalizacion Piso 4 puede cerrarse con Luis Herrera.",
+    message: "Hospitalizacion 7 CD puede cerrarse con Luis Herrera.",
     severity: "info",
     createdAt: "2026-03-23T06:05:00.000Z",
     updatedAt: "2026-03-23T06:05:00.000Z",

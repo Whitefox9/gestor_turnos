@@ -1,4 +1,4 @@
-import { AlertTriangle, CalendarRange, CheckCheck, ClipboardList, RotateCcw, Send, Sparkles, WandSparkles, UsersRound } from "lucide-react";
+import { AlertTriangle, CalendarRange, CheckCheck, ClipboardList, Send, Sparkles, UsersRound } from "lucide-react";
 import { Badge } from "@/shared/components/ui/badge";
 import { Button } from "@/shared/components/ui/button";
 import { Card } from "@/shared/components/ui/card";
@@ -15,8 +15,6 @@ interface PlannerTopBarProps {
   actionMessage?: string;
   actionTone?: "success" | "error" | "neutral";
   onValidateRules?: () => void;
-  onResetAssignments?: () => void;
-  onAutoAssign?: () => void;
   onAutoAssignEmptyOnly?: () => void;
   onClearInvalidSlots?: () => void;
   onAutoAssignHighRisk?: () => void;
@@ -37,8 +35,6 @@ export function PlannerTopBar({
   actionMessage,
   actionTone = "neutral",
   onValidateRules,
-  onResetAssignments,
-  onAutoAssign,
   onAutoAssignEmptyOnly,
   onClearInvalidSlots,
   onAutoAssignHighRisk,
@@ -94,32 +90,12 @@ export function PlannerTopBar({
       <Card className="mx-5 rounded-2xl border-slate-200 bg-white/90 shadow-none xl:mx-6">
         <div className="flex flex-col gap-3 p-3 lg:flex-row lg:items-center lg:justify-between">
           <div className={`rounded-2xl border px-4 py-2 text-sm ${actionToneClass}`}>
-            {actionMessage ?? "Ejecuta acciones operativas sobre el periodo actual sin salir del tablero principal."}
+            {actionMessage ?? "La topbar queda para decisiones globales del periodo. Las acciones repetitivas de jornada viven junto al tablero."}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" onClick={onValidateRules}>
               <CheckCheck className="h-4 w-4" />
               Validar reglas
-            </Button>
-            <Button variant="outline" onClick={onResetAssignments} disabled={isSimulating}>
-              <RotateCcw className="h-4 w-4" />
-              Devolver todo
-            </Button>
-            <Button variant="outline" onClick={onAutoAssign} disabled={isSimulating}>
-              <WandSparkles className="h-4 w-4" />
-              Autoasignar
-            </Button>
-            <Button variant="outline" onClick={onAutoAssignEmptyOnly} disabled={isSimulating}>
-              <Sparkles className="h-4 w-4" />
-              Autoasignar vacios
-            </Button>
-            <Button variant="outline" onClick={onClearInvalidSlots} disabled={isSimulating}>
-              <RotateCcw className="h-4 w-4" />
-              Vaciar invalidos
-            </Button>
-            <Button variant="outline" onClick={onAutoAssignHighRisk} disabled={isSimulating}>
-              <WandSparkles className="h-4 w-4" />
-              Autoasignar criticos
             </Button>
             <Button variant="outline" onClick={onSimulate} disabled={isSimulating}>
               <Sparkles className="h-4 w-4" />

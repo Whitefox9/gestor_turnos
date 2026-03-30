@@ -17,6 +17,29 @@ export interface ShiftBucketSummary {
   employeeIds: EntityId[];
 }
 
+export interface RestOperationalSignal {
+  code: "requires_compensatory" | "protected_post_night" | "same_day_lock" | "rest_assigned_today";
+  label: string;
+  detail: string;
+  tone: "info" | "warning" | "danger" | "success";
+}
+
+export interface DailyRestRecommendation {
+  employeeId: EntityId;
+  employeeName: string;
+  currentWeeklyHours: number;
+  reason: string;
+  tone: RestOperationalSignal["tone"];
+}
+
+export interface DailyRestOperationalSummary {
+  assignedRestCount: number;
+  requiresCompensatoryCount: number;
+  protectedPostNightCount: number;
+  sameDayLockCount: number;
+  recommendations: DailyRestRecommendation[];
+}
+
 export interface AssignmentValidationResult {
   valid: boolean;
   reason?: string;

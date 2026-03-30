@@ -12,10 +12,12 @@ import type { CareModule } from "@/shared/types/module.types";
 import type { Rule } from "@/shared/types/rule.types";
 import type {
   AssignmentValidationResult,
+  DailyRestOperationalSummary,
   HoverAssignmentPreview,
   IncidentReplacementSuggestion,
   LocalizedIncidentImpact,
   PublicationSimulationResult,
+  RestOperationalSignal,
   ShiftAssignment,
   ShiftBucketSummary,
   ShiftKind,
@@ -206,24 +208,11 @@ export const schedulingService = {
     planningShift?: ShiftKind;
     weekStartDate?: string;
   }) {
-    if (planningShift === "descanso_remunerado") {
-      return {
-        modules,
-        assignments: [],
-        skipped: modules
-          .filter((module) => !targetModuleId || module.id === targetModuleId)
-          .map((module) => ({
-            moduleId: module.id,
-            moduleName: module.name,
-            reason: "El descanso remunerado no se autoasigna como cobertura por dependencia.",
-          })),
-      };
-    }
-
     let workingModules = modules.map((module) => ({
       ...module,
       assignedEmployeeIds: [...module.assignedEmployeeIds],
     }));
+    let workingAssignments = [...weeklyAssignments];
     const appliedAssignments: Array<{ employeeId: string; employeeName: string; moduleId: string; moduleName: string; score: number }> = [];
     const skipped: Array<{ moduleId: string; moduleName: string; reason: string }> = [];
 
@@ -253,7 +242,7 @@ export const schedulingService = {
           .filter((employee) => !occupiedIds.has(employee.id))
           .map((employee) => ({
             employee,
-            score: getMockAssignmentScore(employee, module, rules, weeklyAssignments, planningDate, planningShift),
+            score: getMockAssignmentScore(employee, module, rules, workingAssignments, planningDate, planningShift),
           }))
           .sort((left, right) => right.score - left.score);
 
@@ -264,14 +253,26 @@ export const schedulingService = {
             employees,
             modules: workingModules,
             rules,
-            assignments: weeklyAssignments,
+            assignments: workingAssignments,
             planningDate,
             planningShift,
             weekStartDate,
           }).valid,
         );
 
-        if (!nextCandidate) {
+        const fallbackCandidate =
+          nextCandidate ??
+          candidates.find(({ employee }) =>
+            canFallbackAutoAssignEmployee({
+              employee,
+              module,
+              assignments: workingAssignments,
+              planningDate,
+              planningShift,
+            }),
+          );
+
+        if (!fallbackCandidate) {
           skipped.push({
             moduleId: module.id,
             moduleName: module.name,
@@ -284,17 +285,32 @@ export const schedulingService = {
           item.id === module.id
             ? {
                 ...item,
-                assignedEmployeeIds: [...item.assignedEmployeeIds, nextCandidate.employee.id],
+                assignedEmployeeIds: [...item.assignedEmployeeIds, fallbackCandidate.employee.id],
               }
             : item,
         );
+        if (planningDate) {
+          workingAssignments = [
+            ...workingAssignments,
+            {
+              id: `auto-${planningDate}-${planningShift}-${module.id}-${fallbackCandidate.employee.id}`,
+              employeeId: fallbackCandidate.employee.id,
+              moduleId: module.id,
+              date: planningDate,
+              shift: planningShift,
+              valid: true,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            },
+          ];
+        }
 
         appliedAssignments.push({
-          employeeId: nextCandidate.employee.id,
-          employeeName: nextCandidate.employee.fullName,
+          employeeId: fallbackCandidate.employee.id,
+          employeeName: fallbackCandidate.employee.fullName,
           moduleId: module.id,
           moduleName: module.name,
-          score: nextCandidate.score,
+          score: fallbackCandidate.score,
         });
 
         gap -= 1;
@@ -322,7 +338,18 @@ export function getMockAssignmentScore(
     employeeId: employee.id,
     assignments,
     weekStartDate: getWeekStartDate(planningDate ?? new Date().toISOString().slice(0, 10)),
+    throughDate: planningDate,
+    throughShift: planningShift,
   });
+  if (planningShift === "descanso_remunerado") {
+    const compensatoryUrgencyBonus = weekStats.compensatoryDays <= 1 ? 18 : weekStats.compensatoryDays === 2 ? 10 : 4;
+    const workloadReliefBonus = weekStats.totalHours >= 32 ? 14 : weekStats.totalHours >= 24 ? 8 : 2;
+    const sameModuleBonus = employee.moduleIds.includes(module.id) ? 6 : 0;
+    const statusPenalty = employee.status === "off" ? 30 : 0;
+
+    return Math.max(35, Math.min(99, 52 + compensatoryUrgencyBonus + workloadReliefBonus + sameModuleBonus - statusPenalty));
+  }
+
   const requiredMatches = module.requiredSkills.filter((skill) => employee.skills.includes(skill)).length;
   const skillScore = Math.min(70, requiredMatches * 35);
   const workloadPenalty = weekStats.totalHours >= 40 ? 12 : weekStats.totalHours >= 32 ? 6 : 0;
@@ -367,14 +394,243 @@ export function getHoverAssignmentPreview(
   const sourceModule = modules.find((item) => item.assignedEmployeeIds.includes(employee.id));
   const advisoryRuleCodes = getAdvisoryRuleCodes(employee, module, sourceModule, rules);
   const risk = getMockSlotRisk(employee, module, rules);
+  const restReason =
+    planningShift === "descanso_remunerado"
+      ? getRestAssignmentReason({
+          employee,
+          assignments,
+          weekStartDate: getWeekStartDate(planningDate ?? new Date().toISOString().slice(0, 10)),
+        })
+      : null;
 
   return {
     employeeName: employee.fullName,
     moduleName: module.name,
     score: getMockAssignmentScore(employee, module, rules, assignments, planningDate, planningShift),
     riskLevel: risk.level,
-    riskHint: risk.reasons[0],
+    riskHint: restReason?.detail ?? risk.reasons[0],
     advisoryRuleCodes,
+  };
+}
+
+export function getRestAssignmentReason({
+  employee,
+  assignments,
+  weekStartDate,
+}: {
+  employee: Employee;
+  assignments: ShiftAssignment[];
+  weekStartDate: string;
+}) {
+  const stats = getEmployeeWeekStats({
+    employeeId: employee.id,
+    assignments,
+    weekStartDate,
+  });
+
+  if (stats.compensatoryDays <= 1 && stats.totalHours >= 32) {
+    return {
+      label: "Compensatorio prioritario",
+      detail: "Alta carga semanal y sin margen de compensatorio. Conviene proteger su descanso.",
+      tone: "danger" as const,
+    };
+  }
+
+  if (stats.compensatoryDays <= 1) {
+    return {
+      label: "Requiere compensatorio",
+      detail: "Está cerca de agotar sus días de compensatorio y conviene asignarle libre.",
+      tone: "warning" as const,
+    };
+  }
+
+  if (stats.nightShifts >= 2) {
+    return {
+      label: "Recuperación nocturna",
+      detail: "Ya acumuló turnos nocturnos en la semana y se prioriza su recuperación.",
+      tone: "info" as const,
+    };
+  }
+
+  if (stats.totalHours >= 32) {
+    return {
+      label: "Alta carga semanal",
+      detail: "Su carga semanal está alta y el descanso ayuda a equilibrar horas.",
+      tone: "warning" as const,
+    };
+  }
+
+  return {
+    label: "Balance operativo",
+    detail: "El descanso ayuda a sostener una distribución semanal estable del equipo.",
+    tone: "info" as const,
+  };
+}
+
+export function getEmployeeOperationalSignalsForContext({
+  employee,
+  assignments,
+  planningDate,
+  planningShift,
+  weekStartDate,
+}: {
+  employee: Employee;
+  assignments: ShiftAssignment[];
+  planningDate: string;
+  planningShift: ShiftKind;
+  weekStartDate: string;
+}): RestOperationalSignal[] {
+  const stats = getEmployeeWeekStats({
+    employeeId: employee.id,
+    assignments,
+    weekStartDate,
+    throughDate: planningDate,
+    throughShift: planningShift,
+  });
+  const signals: RestOperationalSignal[] = [];
+  const hasSameDayCoverage = hasWorkingAssignmentOnDate(employee.id, assignments, planningDate);
+  const hasSameDayRest = hasRestAssignmentOnDate(employee.id, assignments, planningDate);
+  const previousDate = addDays(planningDate, -1);
+  const hadPreviousNight = assignments.some(
+    (assignment) =>
+      assignment.employeeId === employee.id &&
+      assignment.date === previousDate &&
+      isNightShift(assignment.shift),
+  );
+
+  if (hasSameDayRest) {
+    signals.push({
+      code: "rest_assigned_today",
+      label: "Libre hoy",
+      detail: "Ya tiene descanso o compensatorio asignado para este día.",
+      tone: "success",
+    });
+  }
+
+  if (planningShift !== "descanso_remunerado" && hasSameDayCoverage) {
+    signals.push({
+      code: "same_day_lock",
+      label: "No debe tomar otra jornada hoy",
+      detail: "Ya tiene cobertura asistencial en este día y conviene evitar una segunda jornada.",
+      tone: "danger",
+    });
+  }
+
+  if (hadPreviousNight) {
+    signals.push({
+      code: "protected_post_night",
+      label: "Protegido post noche",
+      detail: "Trabajó turno nocturno el día previo y el sistema prioriza su recuperación.",
+      tone: "warning",
+    });
+  }
+
+  if (stats.compensatoryDays <= 1) {
+    signals.push({
+      code: "requires_compensatory",
+      label: "Requiere compensatorio",
+      detail: "Está al límite de descanso semanal y conviene priorizarle libre o una carga más ligera.",
+      tone: "warning",
+    });
+  }
+
+  return signals;
+}
+
+export function buildDailyRestOperationalSummary({
+  employees,
+  assignments,
+  planningDate,
+  planningShift,
+  weekStartDate,
+}: {
+  employees: Employee[];
+  assignments: ShiftAssignment[];
+  planningDate: string;
+  planningShift: ShiftKind;
+  weekStartDate: string;
+}): DailyRestOperationalSummary {
+  const recommendations = employees
+    .map((employee) => {
+      const signals = getEmployeeOperationalSignalsForContext({
+        employee,
+        assignments,
+        planningDate,
+        planningShift,
+        weekStartDate,
+      });
+      const weekStats = getEmployeeWeekStats({
+        employeeId: employee.id,
+        assignments,
+        weekStartDate,
+        throughDate: planningDate,
+      });
+      const primarySignal =
+        signals.find((signal) => signal.code === "requires_compensatory") ??
+        signals.find((signal) => signal.code === "protected_post_night") ??
+        signals.find((signal) => signal.code === "rest_assigned_today");
+
+      if (!primarySignal) {
+        return null;
+      }
+
+      return {
+        employeeId: employee.id,
+        employeeName: employee.fullName,
+        currentWeeklyHours: weekStats.totalHours,
+        reason: primarySignal.detail,
+        tone: primarySignal.tone,
+        priority:
+          primarySignal.code === "requires_compensatory"
+            ? 3
+            : primarySignal.code === "protected_post_night"
+              ? 2
+              : 1,
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => Boolean(item))
+    .sort((left, right) => {
+      if (right.priority !== left.priority) {
+        return right.priority - left.priority;
+      }
+
+      return right.currentWeeklyHours - left.currentWeeklyHours;
+    })
+    .slice(0, 5)
+    .map(({ priority: _priority, ...item }) => item);
+
+  return {
+    assignedRestCount: assignments.filter(
+      (assignment) => assignment.date === planningDate && assignment.shift === "descanso_remunerado",
+    ).length,
+    requiresCompensatoryCount: employees.filter((employee) =>
+      getEmployeeOperationalSignalsForContext({
+        employee,
+        assignments,
+        planningDate,
+        planningShift,
+        weekStartDate,
+      }).some((signal) => signal.code === "requires_compensatory"),
+    ).length,
+    protectedPostNightCount: employees.filter((employee) =>
+      getEmployeeOperationalSignalsForContext({
+        employee,
+        assignments,
+        planningDate,
+        planningShift,
+        weekStartDate,
+      }).some((signal) => signal.code === "protected_post_night"),
+    ).length,
+    sameDayLockCount: employees.filter((employee) =>
+      getEmployeeOperationalSignalsForContext({
+        employee,
+        assignments,
+        planningDate,
+        planningShift,
+        weekStartDate,
+      }).some((signal) => signal.code === "same_day_lock"),
+    ).length,
+    recommendations,
   };
 }
 
@@ -486,6 +742,205 @@ export function getPlanningWeekDays(weekStartDate: string) {
 
 export function getPlanningWeekStartDate(date: string) {
   return getWeekStartDate(date);
+}
+
+export function getAssignedEmployeeIdsForDate(assignments: ShiftAssignment[], planningDate: string) {
+  return Array.from(
+    new Set(
+      assignments
+        .filter((assignment) => assignment.date === planningDate)
+        .map((assignment) => assignment.employeeId),
+    ),
+  );
+}
+
+export function getPreviousShiftByEmployee({
+  employeeId,
+  assignments,
+  planningDate,
+  planningShift = "manana",
+}: {
+  employeeId: string;
+  assignments: ShiftAssignment[];
+  planningDate: string;
+  planningShift?: ShiftKind;
+}) {
+  const shiftOrder = getShiftOrder(planningShift);
+  const previousAssignments = assignments
+    .filter((assignment) => assignment.employeeId === employeeId)
+    .filter(
+      (assignment) =>
+        assignment.date < planningDate ||
+        (assignment.date === planningDate && getShiftOrder(assignment.shift) < shiftOrder),
+    )
+    .sort((left, right) => {
+      if (left.date === right.date) {
+        return getShiftOrder(right.shift) - getShiftOrder(left.shift);
+      }
+
+      return right.date.localeCompare(left.date);
+    });
+
+  if (previousAssignments.length === 0) {
+    return null;
+  }
+
+  const previousAssignment = previousAssignments[0];
+
+  return {
+    shift: previousAssignment.shift,
+    label: getShiftLabel(previousAssignment.shift),
+    date: previousAssignment.date,
+  };
+}
+
+export function buildDailyAutoAssignmentPlan({
+  employees = employeesMock,
+  modules = modulesMock,
+  rules = rulesMock,
+  assignments = schedulingAssignmentsMock,
+  planningDate,
+  weekStartDate,
+  targetModuleId,
+}: {
+  employees?: Employee[];
+  modules?: CareModule[];
+  rules?: Rule[];
+  assignments?: ShiftAssignment[];
+  planningDate: string;
+  weekStartDate: string;
+  targetModuleId?: string;
+}) {
+  const shifts: ShiftKind[] = ["manana", "tarde", "noche", "noche_larga", "descanso_remunerado"];
+  const scopedModules = modules.filter((module) => !targetModuleId || module.id === targetModuleId);
+  const historicalAssignments = assignments.filter((assignment) => assignment.date < planningDate);
+  const futureAssignments = assignments.filter((assignment) => assignment.date > planningDate);
+  let workingAssignments = [...historicalAssignments];
+  const usedEmployeeIdsForDay = new Set<string>();
+  const appliedAssignments: Array<{
+    employeeId: string;
+    employeeName: string;
+    moduleId: string;
+    moduleName: string;
+    score: number;
+    shift: ShiftKind;
+  }> = [];
+  const skipped: Array<{
+    moduleId: string;
+    moduleName: string;
+    reason: string;
+    shift: ShiftKind;
+  }> = [];
+
+  shifts.forEach((shift) => {
+    scopedModules.forEach((module) => {
+      let assignedCount = workingAssignments.filter(
+        (assignment) =>
+          assignment.date === planningDate &&
+          assignment.shift === shift &&
+          assignment.moduleId === module.id,
+      ).length;
+
+      while (assignedCount < module.capacity) {
+        const modulesForShift = buildModulesForPlanningSlice({
+          modules,
+          assignments: workingAssignments,
+          planningDate,
+          planningShift: shift,
+        });
+        const candidates = employees
+          .filter((employee) => employee.status === "available")
+          .filter((employee) => !usedEmployeeIdsForDay.has(employee.id))
+          .filter((employee) =>
+            shift === "descanso_remunerado"
+              ? true
+              : isEmployeeCompatibleWithModule(employee, module).compatible,
+          )
+          .map((employee) => ({
+            employee,
+            score: getMockAssignmentScore(
+              employee,
+              module,
+              rules,
+              workingAssignments,
+              planningDate,
+              shift,
+            ),
+          }))
+          .sort((left, right) => right.score - left.score);
+
+        const selectedCandidate =
+          candidates.find(({ employee }) =>
+            evaluateAssignment({
+              employeeId: employee.id,
+              moduleId: module.id,
+              employees,
+              modules: modulesForShift,
+              rules,
+              assignments: workingAssignments,
+              planningDate,
+              planningShift: shift,
+              weekStartDate,
+            }).valid,
+          ) ??
+          candidates.find(({ employee }) =>
+            canFallbackAutoAssignEmployee({
+              employee,
+              module,
+              assignments: workingAssignments,
+              planningDate,
+              planningShift: shift,
+            }),
+          );
+
+        if (!selectedCandidate) {
+          skipped.push({
+            moduleId: module.id,
+            moduleName: module.name,
+            shift,
+            reason: "No se encontró un candidato elegible para este día y jornada.",
+          });
+          break;
+        }
+
+        const timestamp = new Date().toISOString();
+        workingAssignments = [
+          ...workingAssignments,
+          {
+            id: `day-auto-${planningDate}-${shift}-${module.id}-${selectedCandidate.employee.id}`,
+            employeeId: selectedCandidate.employee.id,
+            moduleId: module.id,
+            date: planningDate,
+            shift,
+            valid: true,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          },
+        ];
+        usedEmployeeIdsForDay.add(selectedCandidate.employee.id);
+        appliedAssignments.push({
+          employeeId: selectedCandidate.employee.id,
+          employeeName: selectedCandidate.employee.fullName,
+          moduleId: module.id,
+          moduleName: module.name,
+          score: selectedCandidate.score,
+          shift,
+        });
+        assignedCount += 1;
+      }
+    });
+  });
+
+  return {
+    assignments: [...workingAssignments, ...futureAssignments],
+    appliedAssignments,
+    skipped,
+    assignedEmployeeIdsForDay: Array.from(usedEmployeeIdsForDay),
+    perShiftCounts: shifts.map((shift) => ({
+      shift,
+      count: appliedAssignments.filter((assignment) => assignment.shift === shift).length,
+    })),
+  };
 }
 
 export function getMockModuleRisk(module: CareModule, assignedEmployees: Employee[], rules: Rule[] = rulesMock) {
@@ -768,6 +1223,8 @@ function evaluateAssignment({
     employeeId,
     assignments,
     weekStartDate: effectiveWeekStart,
+    throughDate: planningDate,
+    throughShift: planningShift,
   });
   const alreadyAssignedInCurrentSlice = Boolean(assignedModule);
   const projectedHours = weekStats.totalHours + (alreadyAssignedInCurrentSlice ? 0 : getShiftDurationHours(planningShift));
@@ -777,7 +1234,7 @@ function evaluateAssignment({
   const matchesRole = compatibility.matchesRole;
   const matchesSkill = compatibility.matchesSkill;
 
-  if (activeRuleCodes.has("R-HRD-12") && !matchesRole) {
+  if (planningShift !== "descanso_remunerado" && activeRuleCodes.has("R-HRD-12") && !matchesRole) {
     return {
       valid: false,
       reason: "R-HRD-12 bloquea la asignacion: el colaborador no cumple el rol base requerido por la dependencia.",
@@ -785,7 +1242,7 @@ function evaluateAssignment({
     };
   }
 
-  if (activeRuleCodes.has("R-HRD-13") && !matchesSkill) {
+  if (planningShift !== "descanso_remunerado" && activeRuleCodes.has("R-HRD-13") && !matchesSkill) {
     return {
       valid: false,
       reason: "R-HRD-13 bloquea la asignacion: el perfil no cumple la competencia requerida por el modulo.",
@@ -872,14 +1329,21 @@ export function getEmployeeWeekStats({
   employeeId,
   assignments,
   weekStartDate,
+  throughDate,
+  throughShift,
 }: {
   employeeId: string;
   assignments: ShiftAssignment[];
   weekStartDate: string;
+  throughDate?: string;
+  throughShift?: ShiftKind;
 }) {
   const weekDays = new Set(getPlanningWeekDays(weekStartDate).map((day) => day.date));
   const relevantAssignments = assignments.filter(
-    (assignment) => assignment.employeeId === employeeId && weekDays.has(assignment.date),
+    (assignment) =>
+      assignment.employeeId === employeeId &&
+      weekDays.has(assignment.date) &&
+      isAssignmentOnOrBeforeContext(assignment, throughDate, throughShift),
   );
 
   return {
@@ -911,6 +1375,64 @@ function hasRestAssignmentOnDate(employeeId: string, assignments: ShiftAssignmen
       assignment.date === date &&
       assignment.shift === "descanso_remunerado",
   );
+}
+
+function canFallbackAutoAssignEmployee({
+  employee,
+  module,
+  assignments,
+  planningDate,
+  planningShift,
+}: {
+  employee: Employee;
+  module: CareModule;
+  assignments: ShiftAssignment[];
+  planningDate?: string;
+  planningShift: ShiftKind;
+}) {
+  if (employee.status !== "available") {
+    return false;
+  }
+
+  if (planningDate) {
+    const hasAnyAssignmentToday = assignments.some(
+      (assignment) => assignment.employeeId === employee.id && assignment.date === planningDate,
+    );
+
+    if (hasAnyAssignmentToday) {
+      return false;
+    }
+  }
+
+  if (planningShift === "descanso_remunerado") {
+    return true;
+  }
+
+  return isEmployeeCompatibleWithModule(employee, module).compatible;
+}
+
+function isAssignmentOnOrBeforeContext(
+  assignment: ShiftAssignment,
+  throughDate?: string,
+  throughShift?: ShiftKind,
+) {
+  if (!throughDate) {
+    return true;
+  }
+
+  if (assignment.date < throughDate) {
+    return true;
+  }
+
+  if (assignment.date > throughDate) {
+    return false;
+  }
+
+  if (!throughShift) {
+    return true;
+  }
+
+  return getShiftOrder(assignment.shift) <= getShiftOrder(throughShift);
 }
 
 export function buildWeeklyCopilotInsights({
@@ -1192,6 +1714,23 @@ function getShiftLabel(shift: ShiftKind) {
 
 function isNightShift(shift: ShiftKind) {
   return shift === "noche" || shift === "noche_larga";
+}
+
+function getShiftOrder(shift: ShiftKind) {
+  if (shift === "manana") {
+    return 0;
+  }
+  if (shift === "tarde") {
+    return 1;
+  }
+  if (shift === "noche") {
+    return 2;
+  }
+  if (shift === "noche_larga") {
+    return 3;
+  }
+
+  return 4;
 }
 
 function getShiftDurationHours(shift: ShiftKind) {

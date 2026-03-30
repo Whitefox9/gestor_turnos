@@ -9,7 +9,7 @@ export function TopNavbar() {
   const logout = useAuthStore((state) => state.logout);
 
   return (
-    <header className="sticky top-0 z-20 flex h-20 items-center justify-between border-b bg-white/85 px-6 backdrop-blur">
+    <header className="sticky top-0 z-30 flex h-20 items-center justify-between border-b border-slate-200/80 bg-white/88 px-6 shadow-[0_10px_30px_-24px_rgba(15,23,42,0.3)] backdrop-blur-xl">
       <div className="flex items-center gap-3">
         <div>
           <p className="text-sm font-semibold">{session?.tenant?.name ?? "Plataforma multi-tenant"}</p>

@@ -14,7 +14,7 @@ export function AppSidebar() {
   return (
     <aside
       className={cn(
-        "shrink-0 border-r border-slate-200 bg-white/95 text-slate-700 transition-all",
+        "sticky top-0 z-30 h-screen shrink-0 self-start overflow-y-auto border-r border-slate-200/80 bg-white/88 text-slate-700 shadow-[10px_0_30px_-24px_rgba(15,23,42,0.3)] backdrop-blur-xl transition-all",
         sidebarOpen ? "w-[248px]" : "w-[72px]",
       )}
     >

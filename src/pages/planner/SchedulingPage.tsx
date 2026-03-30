@@ -10,14 +10,18 @@ import { EmployeeCard } from "@/features/scheduling/components/EmployeeCard";
 import { EmployeeFiltersPanel } from "@/features/scheduling/components/EmployeeFiltersPanel";
 import { EmployeeListPanel } from "@/features/scheduling/components/EmployeeListPanel";
 import { ModuleBoard } from "@/features/scheduling/components/ModuleBoard";
+import { SchedulingActionBar } from "@/features/scheduling/components/SchedulingActionBar";
 import { SchedulingToolbar } from "@/features/scheduling/components/SchedulingToolbar";
 import { ShiftHistoryStrip } from "@/features/scheduling/components/ShiftHistoryStrip";
 import { useAssignmentActions } from "@/features/scheduling/hooks/useAssignmentActions";
 import { useSchedulingData } from "@/features/scheduling/hooks/useSchedulingData";
 import {
   applyIncidentsToPlanningSlice,
+  buildDailyRestOperationalSummary,
+  buildDailyAutoAssignmentPlan,
   buildLocalizedIncidentImpacts,
   buildModulesForPlanningSlice,
+  getAssignedEmployeeIdsForDate,
   getEmployeeWeekStats,
   getHoverAssignmentPreview,
   getInvalidAssignedEmployeeIdsForModule,
@@ -32,6 +36,10 @@ import { PageHeader } from "@/shared/components/layout/PageHeader";
 import { PlannerTopBar } from "@/shared/components/layout/PlannerTopBar";
 import type { CareModule } from "@/shared/types/module.types";
 import type { Employee } from "@/shared/types/employee.types";
+import type { ShiftAssignment, ShiftKind } from "@/shared/types/scheduling.types";
+
+const ASSISTANCE_SHIFTS: ShiftKind[] = ["manana", "tarde", "noche", "noche_larga"];
+const DAY_SHIFTS: ShiftKind[] = [...ASSISTANCE_SHIFTS, "descanso_remunerado"];
 
 export function SchedulingPage() {
   const { data, isLoading, filteredEmployees } = useSchedulingData();
@@ -58,8 +66,10 @@ export function SchedulingPage() {
   const setCurrentBoardSnapshot = usePlanningHistoryStore((state) => state.setCurrentBoardSnapshot);
   const currentPlanningDate = usePlanningHistoryStore((state) => state.currentPlanningDate);
   const currentPlanningShift = usePlanningHistoryStore((state) => state.currentPlanningShift);
+  const activePlanningDependencyId = usePlanningHistoryStore((state) => state.activePlanningDependencyId);
   const setPlanningDate = usePlanningHistoryStore((state) => state.setPlanningDate);
   const setPlanningShift = usePlanningHistoryStore((state) => state.setPlanningShift);
+  const setActivePlanningDependency = usePlanningHistoryStore((state) => state.setActivePlanningDependency);
   const planningRangeStart = usePlanningHistoryStore((state) => state.planningRangeStart);
   const planningRangeEnd = usePlanningHistoryStore((state) => state.planningRangeEnd);
   const setPlanningRange = usePlanningHistoryStore((state) => state.setPlanningRange);
@@ -67,12 +77,14 @@ export function SchedulingPage() {
   const weeklyAssignments = usePlanningHistoryStore((state) => state.weeklyAssignments);
   const hydrateWeeklyAssignments = usePlanningHistoryStore((state) => state.hydrateWeeklyAssignments);
   const setSliceAssignments = usePlanningHistoryStore((state) => state.setSliceAssignments);
+  const replaceWeeklyAssignments = usePlanningHistoryStore((state) => state.replaceWeeklyAssignments);
   const activeSliceKey = `${currentPlanningDate}::${currentPlanningShift}`;
   const [activeEmployee, setActiveEmployee] = useState<Employee | null>(null);
   const [hoveredTargetId, setHoveredTargetId] = useState<string | null>(null);
   const [modulesState, setModulesState] = useState<{ sliceKey: string; modules: CareModule[] } | null>(null);
   const [selectedIncidentId, setSelectedIncidentId] = useState<string | null>(null);
   const [selectedBoardTargetId, setSelectedBoardTargetId] = useState<string | null>(null);
+  const [autoAssignDiagnostics, setAutoAssignDiagnostics] = useState<string[] | null>(null);
 
   const incidents = incidentsData ?? [];
   const baseSliceModules = useMemo(
@@ -98,6 +110,29 @@ export function SchedulingPage() {
   const modules = modulesState?.sliceKey === activeSliceKey ? modulesState.modules : sliceModules;
   const employees = data?.employees ?? [];
   const activeRules = (rulesData ?? []).filter((rule) => rule.enabled);
+  const effectiveWeeklyAssignments = useMemo(() => {
+    if (modulesState?.sliceKey !== activeSliceKey) {
+      return weeklyAssignments;
+    }
+
+    return syncAssignmentsForSlice({
+      baseAssignments: weeklyAssignments,
+      planningDate: currentPlanningDate,
+      planningShift: currentPlanningShift,
+      sliceModulesToPersist: modulesState.modules,
+    });
+  }, [modulesState, activeSliceKey, weeklyAssignments, currentPlanningDate, currentPlanningShift]);
+  const restSummary = useMemo(
+    () =>
+      buildDailyRestOperationalSummary({
+        employees,
+        assignments: effectiveWeeklyAssignments,
+        planningDate: currentPlanningDate,
+        planningShift: currentPlanningShift,
+        weekStartDate,
+      }),
+    [employees, effectiveWeeklyAssignments, currentPlanningDate, currentPlanningShift, weekStartDate],
+  );
   const localizedIncidentImpacts = useMemo(
     () =>
       buildLocalizedIncidentImpacts({
@@ -105,12 +140,12 @@ export function SchedulingPage() {
         modules,
         employees,
         rules: activeRules,
-        assignments: weeklyAssignments,
+        assignments: effectiveWeeklyAssignments,
         planningDate: currentPlanningDate,
         planningShift: currentPlanningShift,
         weekStartDate,
       }),
-    [incidents, modules, employees, activeRules, weeklyAssignments, currentPlanningDate, currentPlanningShift, weekStartDate],
+    [incidents, modules, employees, activeRules, effectiveWeeklyAssignments, currentPlanningDate, currentPlanningShift, weekStartDate],
   );
   const activeIncidentEmployeeIds = new Set(localizedIncidentImpacts.map((impact) => impact.employeeId));
   const selectedIncidentImpact = selectedIncidentId
@@ -129,16 +164,17 @@ export function SchedulingPage() {
         .join("|"),
     [incidents, currentPlanningDate, currentPlanningShift],
   );
-  const visibleEmployees = filteredEmployees.filter(
-    (employee) => !modules.some((module) => module.assignedEmployeeIds.includes(employee.id)) && !activeIncidentEmployeeIds.has(employee.id),
+  const assignedEmployeesTodayIds = useMemo(
+    () => new Set(getAssignedEmployeeIdsForDate(effectiveWeeklyAssignments, currentPlanningDate)),
+    [effectiveWeeklyAssignments, currentPlanningDate],
   );
+  const contextualPoolEmployees = filteredEmployees.filter((employee) => !activeIncidentEmployeeIds.has(employee.id));
+  const eligiblePoolEmployees = contextualPoolEmployees.filter((employee) => !assignedEmployeesTodayIds.has(employee.id));
   const totalSlots = modules.reduce((sum, module) => sum + module.capacity, 0);
   const assignedSlots = modules.reduce((sum, module) => sum + module.assignedEmployeeIds.length, 0);
   const coverage = totalSlots > 0 ? Math.round((assignedSlots / totalSlots) * 100) : 0;
   const alertModules = modules.filter((module) => module.assignedEmployeeIds.length < module.capacity).length;
-  const unassignedEmployees = employees.filter(
-    (employee) => !modules.some((module) => module.assignedEmployeeIds.includes(employee.id)) && !activeIncidentEmployeeIds.has(employee.id),
-  ).length;
+  const unassignedEmployees = eligiblePoolEmployees.length;
 
   const employeeMap = useMemo(
     () => new Map(employees.map((employee) => [employee.id, employee])),
@@ -153,8 +189,12 @@ export function SchedulingPage() {
     : null;
   const hoverPreview =
     activeEmployee && hoveredModule
-      ? getHoverAssignmentPreview(activeEmployee, hoveredModule, modules, activeRules, weeklyAssignments, currentPlanningDate, currentPlanningShift)
+      ? getHoverAssignmentPreview(activeEmployee, hoveredModule, modules, activeRules, effectiveWeeklyAssignments, currentPlanningDate, currentPlanningShift)
       : null;
+  const activeBoardModule =
+    activePlanningDependencyId === "all"
+      ? null
+      : modules.find((module) => module.id === activePlanningDependencyId) ?? null;
   const selectedBoardContext = useMemo(() => {
     if (!selectedBoardTargetId) {
       return null;
@@ -172,25 +212,27 @@ export function SchedulingPage() {
         module,
         employees,
         rules: activeRules,
-        assignments: weeklyAssignments,
+        assignments: effectiveWeeklyAssignments,
         planningDate: currentPlanningDate,
         planningShift: currentPlanningShift,
         weekStartDate,
       });
       const shiftHours = currentPlanningShift === "noche_larga" ? 12 : 8;
-      const alternatives = visibleEmployees
+      const alternatives = eligiblePoolEmployees
         .filter((candidate) => isEmployeeCompatibleWithModule(candidate, module).compatible)
         .filter((candidate) => {
           const stats = getEmployeeWeekStats({
             employeeId: candidate.id,
-            assignments: weeklyAssignments,
+            assignments: effectiveWeeklyAssignments,
             weekStartDate,
+            throughDate: currentPlanningDate,
+            throughShift: currentPlanningShift,
           });
           return stats.totalHours + shiftHours <= 36;
         })
         .map((candidate) => ({
           employee: candidate,
-          score: getMockAssignmentScore(candidate, module, activeRules, weeklyAssignments, currentPlanningDate, currentPlanningShift),
+          score: getMockAssignmentScore(candidate, module, activeRules, effectiveWeeklyAssignments, currentPlanningDate, currentPlanningShift),
         }))
         .sort((left, right) => right.score - left.score)
         .slice(0, 3);
@@ -220,25 +262,27 @@ export function SchedulingPage() {
       module,
       employees,
       rules: activeRules,
-      assignments: weeklyAssignments,
+      assignments: effectiveWeeklyAssignments,
       planningDate: currentPlanningDate,
       planningShift: currentPlanningShift,
       weekStartDate,
     });
     const shiftHours = currentPlanningShift === "noche_larga" ? 12 : 8;
-    const alternatives = visibleEmployees
-      .filter((candidate) => isEmployeeCompatibleWithModule(candidate, module).compatible)
+      const alternatives = eligiblePoolEmployees
+        .filter((candidate) => isEmployeeCompatibleWithModule(candidate, module).compatible)
       .filter((candidate) => {
         const stats = getEmployeeWeekStats({
           employeeId: candidate.id,
-          assignments: weeklyAssignments,
+          assignments: effectiveWeeklyAssignments,
           weekStartDate,
+          throughDate: currentPlanningDate,
+          throughShift: currentPlanningShift,
         });
         return stats.totalHours + shiftHours <= 36;
       })
       .map((candidate) => ({
         employee: candidate,
-        score: getMockAssignmentScore(candidate, module, activeRules, weeklyAssignments, currentPlanningDate, currentPlanningShift),
+        score: getMockAssignmentScore(candidate, module, activeRules, effectiveWeeklyAssignments, currentPlanningDate, currentPlanningShift),
       }))
       .sort((left, right) => right.score - left.score)
       .slice(0, 3);
@@ -258,11 +302,11 @@ export function SchedulingPage() {
     modules,
     employees,
     activeRules,
-    weeklyAssignments,
+    effectiveWeeklyAssignments,
     currentPlanningDate,
     currentPlanningShift,
     weekStartDate,
-    visibleEmployees,
+    eligiblePoolEmployees,
   ]);
   const copilotCase = useMemo<CopilotCase | null>(() => {
     if (selectedIncidentImpact) {
@@ -390,8 +434,10 @@ export function SchedulingPage() {
                 label: "Horas",
                 value: `${getEmployeeWeekStats({
                   employeeId: alternative.employee.id,
-                  assignments: weeklyAssignments,
+                  assignments: effectiveWeeklyAssignments,
                   weekStartDate,
+                  throughDate: currentPlanningDate,
+                  throughShift: currentPlanningShift,
                 }).totalHours}h`,
                 tone: "neutral",
               },
@@ -459,12 +505,16 @@ export function SchedulingPage() {
               summary: `Mejor candidato compatible para cubrir el hueco actual con fit ${primaryAlternative.score}.`,
               impact: `Impacto en horas: ${getEmployeeWeekStats({
                 employeeId: primaryAlternative.employee.id,
-                assignments: weeklyAssignments,
+                assignments: effectiveWeeklyAssignments,
                 weekStartDate,
+                throughDate: currentPlanningDate,
+                throughShift: currentPlanningShift,
               }).totalHours}h → ${getEmployeeWeekStats({
                 employeeId: primaryAlternative.employee.id,
-                assignments: weeklyAssignments,
+                assignments: effectiveWeeklyAssignments,
                 weekStartDate,
+                throughDate: currentPlanningDate,
+                throughShift: currentPlanningShift,
               }).totalHours + (currentPlanningShift === "noche_larga" ? 12 : 8)}h.`,
               actionLabel: "Aplicar sugerencia",
             }
@@ -479,8 +529,10 @@ export function SchedulingPage() {
               label: "Horas",
               value: `${getEmployeeWeekStats({
                 employeeId: alternative.employee.id,
-                assignments: weeklyAssignments,
+                assignments: effectiveWeeklyAssignments,
                 weekStartDate,
+                throughDate: currentPlanningDate,
+                throughShift: currentPlanningShift,
               }).totalHours}h`,
               tone: "neutral",
             },
@@ -523,8 +575,10 @@ export function SchedulingPage() {
               label: "Horas",
               value: `${getEmployeeWeekStats({
                 employeeId: alternative.employee.id,
-                assignments: weeklyAssignments,
+                assignments: effectiveWeeklyAssignments,
                 weekStartDate,
+                throughDate: currentPlanningDate,
+                throughShift: currentPlanningShift,
               }).totalHours}h`,
               tone: "neutral",
             },
@@ -568,8 +622,10 @@ export function SchedulingPage() {
               label: "Horas",
               value: `${getEmployeeWeekStats({
                 employeeId: alternative.employee.id,
-                assignments: weeklyAssignments,
+                assignments: effectiveWeeklyAssignments,
                 weekStartDate,
+                throughDate: currentPlanningDate,
+                throughShift: currentPlanningShift,
               }).totalHours}h`,
               tone: "neutral",
             },
@@ -588,12 +644,52 @@ export function SchedulingPage() {
   const [isSimulating, setIsSimulating] = useState(false);
   const actorName = session?.user.fullName ?? "Planificador mock";
   const weekDays = useMemo(() => getPlanningWeekDays(weekStartDate), [weekStartDate]);
+  const weekDayStatuses = useMemo(
+    () =>
+      weekDays.map((day) => {
+        const relevantModules = data?.modules ?? [];
+
+        const completedSlices = relevantModules.reduce((sum, module) => {
+          return (
+            sum +
+            ASSISTANCE_SHIFTS.filter((shift) => {
+              const assignedCount = effectiveWeeklyAssignments.filter(
+                (assignment) =>
+                  assignment.date === day.date &&
+                  assignment.shift === shift &&
+                  assignment.moduleId === module.id,
+              ).length;
+
+              return assignedCount >= module.capacity;
+            }).length
+          );
+        }, 0);
+
+        const totalSlices = relevantModules.length * ASSISTANCE_SHIFTS.length;
+        const isComplete = totalSlices > 0 && completedSlices === totalSlices;
+        const hasAnyAssignments = effectiveWeeklyAssignments.some((assignment) => assignment.date === day.date);
+
+        return {
+          date: day.date,
+          isComplete,
+          hasAnyAssignments,
+        };
+      }),
+    [weekDays, data?.modules, effectiveWeeklyAssignments],
+  );
 
   useEffect(() => {
     if (selectedIncidentId && !localizedIncidentImpacts.some((impact) => impact.incidentId === selectedIncidentId)) {
       setSelectedIncidentId(null);
     }
   }, [localizedIncidentImpacts, selectedIncidentId]);
+
+  useEffect(() => {
+    if (activePlanningDependencyId !== "all" && !modules.some((module) => module.id === activePlanningDependencyId)) {
+      setActivePlanningDependency("all");
+      setSelectedBoardTargetId(null);
+    }
+  }, [activePlanningDependencyId, modules, setActivePlanningDependency]);
 
   useEffect(() => {
     if (weeklyAssignments.length === 0 && data?.assignments?.length) {
@@ -628,6 +724,42 @@ export function SchedulingPage() {
     });
   }
 
+  function buildSliceAssignmentsFromModules(sliceModulesToPersist: CareModule[], planningDate: string, planningShift: ShiftKind) {
+    return sliceModulesToPersist.flatMap<ShiftAssignment>((module, moduleIndex) =>
+      module.assignedEmployeeIds.map((employeeId, employeeIndex) => ({
+        id: `assignment-${planningDate}-${planningShift}-${module.id}-${employeeId}-${moduleIndex}-${employeeIndex}`,
+        employeeId,
+        moduleId: module.id,
+        date: planningDate,
+        shift: planningShift,
+        valid: true,
+        createdAt: `${planningDate}T00:00:00.000Z`,
+        updatedAt: `${planningDate}T00:00:00.000Z`,
+      })),
+    );
+  }
+
+  function syncAssignmentsForSlice({
+    baseAssignments,
+    planningDate,
+    planningShift,
+    sliceModulesToPersist,
+  }: {
+    baseAssignments: ShiftAssignment[];
+    planningDate: string;
+    planningShift: ShiftKind;
+    sliceModulesToPersist: CareModule[];
+  }) {
+    const persistedSliceAssignments = buildSliceAssignmentsFromModules(sliceModulesToPersist, planningDate, planningShift);
+
+    return [
+      ...baseAssignments.filter(
+        (assignment) => !(assignment.date === planningDate && assignment.shift === planningShift),
+      ),
+      ...persistedSliceAssignments,
+    ];
+  }
+
   async function handleValidateRules() {
     setIsSimulating(true);
     try {
@@ -636,7 +768,7 @@ export function SchedulingPage() {
         modules,
         rules: activeRules,
         actorName,
-        assignments: weeklyAssignments,
+        assignments: effectiveWeeklyAssignments,
         planningDate: currentPlanningDate,
         planningShift: currentPlanningShift,
         weekStartDate,
@@ -654,7 +786,7 @@ export function SchedulingPage() {
         modules,
         rules: activeRules,
         actorName,
-        assignments: weeklyAssignments,
+        assignments: effectiveWeeklyAssignments,
         planningDate: currentPlanningDate,
         planningShift: currentPlanningShift,
         weekStartDate,
@@ -674,7 +806,7 @@ export function SchedulingPage() {
         actorName,
         planningDate: currentPlanningDate,
         planningShift: currentPlanningShift,
-        assignments: weeklyAssignments,
+        assignments: effectiveWeeklyAssignments,
         weekStartDate,
       });
     } finally {
@@ -685,38 +817,74 @@ export function SchedulingPage() {
   async function handleAutoAssign(targetModuleId?: string) {
     setIsSimulating(true);
     try {
-      if (currentPlanningShift === "descanso_remunerado") {
-        reportSuccess({
-          message: "El descanso remunerado no se autoasigna como cobertura por dependencia.",
-          details: [
-            "Este contexto debe planificarse como descanso semanal, no como cupo asistencial del board.",
-            "La autoasignación sigue operando sobre mañana, tarde, noche y noche larga.",
-          ],
-        });
-        return;
-      }
-
-      const currentModules = modules;
-      const plan = schedulingService.buildAutoAssignmentPlan({
+      const effectiveTargetModuleId = targetModuleId;
+      const plan = buildDailyAutoAssignmentPlan({
         employees,
-        modules: currentModules,
+        modules: data?.modules ?? [],
         rules: activeRules,
-        targetModuleId,
-        assignments: weeklyAssignments,
+        assignments: effectiveWeeklyAssignments,
+        planningDate: currentPlanningDate,
+        weekStartDate,
+        targetModuleId: effectiveTargetModuleId,
+      });
+      const nextAssignments = plan.assignments;
+
+      const refreshedActiveSliceModules = applyIncidentsToPlanningSlice({
+        modules: buildModulesForPlanningSlice({
+          modules: data?.modules ?? [],
+          assignments: nextAssignments,
+          planningDate: currentPlanningDate,
+          planningShift: currentPlanningShift,
+        }),
+        incidents,
         planningDate: currentPlanningDate,
         planningShift: currentPlanningShift,
-        weekStartDate,
       });
+      const persistedDayAssignments = nextAssignments.filter((assignment) => assignment.date === currentPlanningDate);
+      const persistedVisibleSliceCount = persistedDayAssignments.filter(
+        (assignment) => assignment.shift === currentPlanningShift,
+      ).length;
+      const boardVisibleSliceCount = refreshedActiveSliceModules.reduce(
+        (sum, module) => sum + module.assignedEmployeeIds.length,
+        0,
+      );
+      const assignedEmployeesTodayCount = new Set(persistedDayAssignments.map((assignment) => assignment.employeeId)).size;
+      const diagnostics = [
+        `${currentPlanningDate} · ${effectiveTargetModuleId ? activeBoardModule?.name ?? "dependencia" : "todas las dependencias"}`,
+        `Generadas por el motor: ${plan.appliedAssignments.length}`,
+        `Persistidas en el día activo: ${persistedDayAssignments.length}`,
+        `Persistidas en la jornada visible (${getShiftLabel(currentPlanningShift)}): ${persistedVisibleSliceCount}`,
+        `Leídas por el board visible: ${boardVisibleSliceCount}`,
+        `Colaboradores únicos asignados hoy: ${assignedEmployeesTodayCount}`,
+        ...DAY_SHIFTS.map((shift) => {
+          const generated = plan.perShiftCounts.find((item) => item.shift === shift)?.count ?? 0;
+          const persisted = persistedDayAssignments.filter((assignment) => assignment.shift === shift).length;
+          return `${getShiftLabel(shift)} -> generadas ${generated} · persistidas ${persisted}`;
+        }),
+      ];
 
-      setLocalModules(plan.modules);
+      replaceWeeklyAssignments(nextAssignments);
+      setLocalModules(refreshedActiveSliceModules);
+      setAutoAssignDiagnostics(diagnostics);
       reportSuccess({
         message:
-          plan.assignments.length > 0
-            ? `Autoasignación completada: ${plan.assignments.length} coberturas aplicadas. ${plan.skipped.length > 0 ? `${plan.skipped.length} dependencias siguen pendientes por reglas activas.` : "No quedaron bloqueos nuevos."}`
+          plan.appliedAssignments.length > 0
+            ? effectiveTargetModuleId
+              ? `Autoasignación completada: ${plan.appliedAssignments.length} asignaciones aplicadas en todas las jornadas de ${activeBoardModule?.name ?? "la dependencia seleccionada"}.`
+              : `Autoasignación completada: ${plan.appliedAssignments.length} asignaciones aplicadas para el día activo completo.`
             : "La autoasignación no encontró candidatos válidos con las reglas activas.",
         details: [
-          ...plan.assignments.slice(0, 6).map((assignment) => `${assignment.employeeName} -> ${assignment.moduleName} (Fit ${assignment.score})`),
-          ...plan.skipped.slice(0, 4).map((item) => `${item.moduleName}: ${item.reason}`),
+          `${currentPlanningDate}: se recalculó el día activo completo con una sola bolsa operativa por fecha.`,
+          ...DAY_SHIFTS.map((shift) => {
+            const count = plan.perShiftCounts.find((item) => item.shift === shift)?.count ?? 0;
+            return `${getShiftLabel(shift)}: ${count} asignaciones`;
+          }),
+          ...plan.appliedAssignments.slice(0, 8).map(
+            (assignment) => `${assignment.employeeName} -> ${assignment.moduleName} · ${getShiftLabel(assignment.shift)} (Fit ${assignment.score})`,
+          ),
+          ...plan.skipped.slice(0, 4).map(
+            (item) => `${item.moduleName} · ${getShiftLabel(item.shift)}: ${item.reason}`,
+          ),
         ],
       });
     } finally {
@@ -727,21 +895,13 @@ export function SchedulingPage() {
   async function handleAutoAssignOnlyEmpty() {
     setIsSimulating(true);
     try {
-      if (currentPlanningShift === "descanso_remunerado") {
-        reportSuccess({
-          message: "Los descansos no se completan con autoasignación por módulos vacíos.",
-          details: ["Selecciona un turno asistencial para usar esta acción."],
-        });
-        return;
-      }
-
       const currentModules = modules;
       const plan = schedulingService.buildAutoAssignmentPlan({
         employees,
         modules: currentModules,
         rules: activeRules,
         onlyEmptyModules: true,
-        assignments: weeklyAssignments,
+        assignments: effectiveWeeklyAssignments,
         planningDate: currentPlanningDate,
         planningShift: currentPlanningShift,
         weekStartDate,
@@ -751,11 +911,15 @@ export function SchedulingPage() {
       reportSuccess({
         message:
           plan.assignments.length > 0
-            ? `Autoasignación sobre módulos vacíos completada: ${plan.assignments.length} coberturas aplicadas sin tocar módulos ya atendidos.`
-            : "No se encontraron módulos completamente vacíos con candidatos válidos para autoasignar.",
-        details: [
-          ...plan.assignments.slice(0, 6).map((assignment) => `${assignment.employeeName} -> ${assignment.moduleName} (Fit ${assignment.score})`),
-          ...plan.skipped.slice(0, 4).map((item) => `${item.moduleName}: ${item.reason}`),
+            ? currentPlanningShift === "descanso_remunerado"
+              ? `Autoasignación de descansos sobre módulos vacíos completada: ${plan.assignments.length} descansos aplicados sin tocar módulos ya atendidos.`
+              : `Autoasignación sobre módulos vacíos completada: ${plan.assignments.length} coberturas aplicadas sin tocar módulos ya atendidos.`
+            : currentPlanningShift === "descanso_remunerado"
+              ? "No se encontraron módulos vacíos con candidatos válidos para asignar descanso."
+              : "No se encontraron módulos completamente vacíos con candidatos válidos para autoasignar.",
+          details: [
+            ...plan.assignments.slice(0, 6).map((assignment) => `${assignment.employeeName} -> ${assignment.moduleName} (Fit ${assignment.score})`),
+            ...plan.skipped.slice(0, 4).map((item) => `${item.moduleName}: ${item.reason}`),
         ],
       });
     } finally {
@@ -780,7 +944,7 @@ export function SchedulingPage() {
         modules: currentModules,
         rules: activeRules,
         onlyHighRiskModules: true,
-        assignments: weeklyAssignments,
+        assignments: effectiveWeeklyAssignments,
         planningDate: currentPlanningDate,
         planningShift: currentPlanningShift,
         weekStartDate,
@@ -803,19 +967,28 @@ export function SchedulingPage() {
   }
 
   function handleResetAssignments() {
-    const currentModules = modules;
-    const nextModules = currentModules.map((module) => ({
-      ...module,
-      assignedEmployeeIds: [],
-    }));
+    const releasedAssignments = effectiveWeeklyAssignments.filter((assignment) => assignment.date === currentPlanningDate);
+    const releasedCount = releasedAssignments.length;
+    const affectedModules = new Set(releasedAssignments.map((assignment) => assignment.moduleId)).size;
+    const affectedShifts = new Set(releasedAssignments.map((assignment) => assignment.shift)).size;
 
+    if (releasedCount === 0) {
+      reportSuccess({
+        message: "No había asignaciones para devolver en el día activo.",
+        details: [`${currentPlanningDate} · todas las jornadas`],
+      });
+      return;
+    }
+
+    replaceWeeklyAssignments(effectiveWeeklyAssignments.filter((assignment) => assignment.date !== currentPlanningDate));
     clearFeedback();
-    setLocalModules(nextModules);
+    setAutoAssignDiagnostics(null);
+    setModulesState(null);
     reportSuccess({
-      message: "Todas las asignaciones de la slice activa fueron devueltas al pool.",
+      message: "Todas las asignaciones del día activo fueron devueltas al pool.",
       details: [
-        `${currentPlanningDate} · ${currentPlanningShift}`,
-        "El tablero quedó limpio para reasignación manual o autoasignación.",
+        `${releasedCount} asignaciones liberadas en ${affectedModules} dependencias y ${affectedShifts} jornadas del ${currentPlanningDate}.`,
+        "El tablero quedó limpio en todas las jornadas para reasignación manual o autoasignación.",
       ],
     });
   }
@@ -839,6 +1012,7 @@ export function SchedulingPage() {
       ),
     );
     clearFeedback();
+    setAutoAssignDiagnostics(null);
     reportSuccess({
       message: `${targetModule.name} fue devuelto al pool.`,
       moduleId,
@@ -861,7 +1035,7 @@ export function SchedulingPage() {
       module: targetModule,
       employees,
       rules: activeRules,
-      assignments: weeklyAssignments,
+      assignments: effectiveWeeklyAssignments,
       planningDate: currentPlanningDate,
       planningShift: currentPlanningShift,
       weekStartDate,
@@ -882,6 +1056,7 @@ export function SchedulingPage() {
       ),
     );
     clearFeedback();
+    setAutoAssignDiagnostics(null);
     reportSuccess({
       message: `${targetModule.name} limpió ${invalidAssignedEmployeeIds.length} asignaciones inválidas.`,
       moduleId,
@@ -902,7 +1077,7 @@ export function SchedulingPage() {
         module,
         employees,
         rules: activeRules,
-        assignments: weeklyAssignments,
+        assignments: effectiveWeeklyAssignments,
         planningDate: currentPlanningDate,
         planningShift: currentPlanningShift,
         weekStartDate,
@@ -931,6 +1106,7 @@ export function SchedulingPage() {
 
     setLocalModules(nextModules);
     clearFeedback();
+    setAutoAssignDiagnostics(null);
     reportSuccess({
       message: `Se vaciaron ${releasedCount} slots inválidos en ${affectedModules} dependencias.`,
       details: [
@@ -949,6 +1125,7 @@ export function SchedulingPage() {
     }
 
     clearFeedback();
+    setAutoAssignDiagnostics(null);
     const applied = await applyAssignment(employee, `${impact.moduleId}::incident-replacement`);
 
     if (!applied) {
@@ -962,12 +1139,16 @@ export function SchedulingPage() {
         `${impact.date} · ${impact.shift}`,
         `${employee.fullName} pasa de ${getEmployeeWeekStats({
           employeeId: employee.id,
-          assignments: weeklyAssignments,
+          assignments: effectiveWeeklyAssignments,
           weekStartDate,
+          throughDate: currentPlanningDate,
+          throughShift: currentPlanningShift,
         }).totalHours}h a ${getEmployeeWeekStats({
           employeeId: employee.id,
-          assignments: weeklyAssignments,
+          assignments: effectiveWeeklyAssignments,
           weekStartDate,
+          throughDate: currentPlanningDate,
+          throughShift: currentPlanningShift,
         }).totalHours + impact.removedHours}h semanales.`,
         "Se preservó el resto de la programación sin cambios en cascada.",
       ],
@@ -996,12 +1177,26 @@ export function SchedulingPage() {
   }
 
   function handleSelectModule(moduleId: string) {
+    setActivePlanningDependency(moduleId);
     setSelectedBoardTargetId(`module::${moduleId}`);
     setSelectedIncidentId(null);
   }
 
   function handleSelectModuleShift(moduleId: string, shift: typeof currentPlanningShift) {
     setPlanningShift(shift);
+    setActivePlanningDependency(moduleId);
+    setSelectedBoardTargetId(`module::${moduleId}`);
+    setSelectedIncidentId(null);
+  }
+
+  function handleChangeActiveBoardModule(moduleId: string | "all") {
+    setActivePlanningDependency(moduleId);
+
+    if (moduleId === "all") {
+      setSelectedBoardTargetId(null);
+      return;
+    }
+
     setSelectedBoardTargetId(`module::${moduleId}`);
     setSelectedIncidentId(null);
   }
@@ -1124,7 +1319,7 @@ export function SchedulingPage() {
       modules: currentModules,
       targetId,
       rules: activeRules,
-      assignments: weeklyAssignments,
+      assignments: effectiveWeeklyAssignments,
       planningDate: currentPlanningDate,
       planningShift: currentPlanningShift,
       weekStartDate,
@@ -1171,6 +1366,7 @@ export function SchedulingPage() {
     }
 
     clearFeedback();
+    setAutoAssignDiagnostics(null);
     await applyAssignment(employee, `${moduleId}::quick-assign`);
   }
 
@@ -1194,6 +1390,7 @@ export function SchedulingPage() {
           : item,
       ),
     );
+    setAutoAssignDiagnostics(null);
     reportRelease({
       message: `${employee.fullName} devuelto al pool desde ${module.name}.`,
       moduleId,
@@ -1209,7 +1406,7 @@ export function SchedulingPage() {
     <div className="space-y-6">
       <PageHeader
         title="Programacion"
-        subtitle={`Planificación semanal por persona y jornada. Editas ${currentPlanningDate} en ${currentPlanningShift} y cada módulo resume mañana, tarde, noche, noche larga y descanso del mismo día.`}
+        subtitle={`Planificación semanal por persona y jornada. Día activo ${currentPlanningDate}, jornada ${currentPlanningShift} y dependencia ${activeBoardModule?.name ?? "Todas"} sincronizados en el mismo contexto operativo.`}
       />
       <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white/80 shadow-soft backdrop-blur">
         <PlannerTopBar
@@ -1224,11 +1421,6 @@ export function SchedulingPage() {
           actionMessage={simulation?.summary}
           actionTone={simulation ? (simulation.canPublish ? "success" : "error") : "neutral"}
           onValidateRules={handleValidateRules}
-          onResetAssignments={handleResetAssignments}
-          onAutoAssign={() => handleAutoAssign()}
-          onAutoAssignEmptyOnly={handleAutoAssignOnlyEmpty}
-          onClearInvalidSlots={handleClearInvalidSlots}
-          onAutoAssignHighRisk={handleAutoAssignHighRisk}
           onSimulate={handleSimulate}
           onPublish={handlePublish}
           isSimulating={isSimulating}
@@ -1238,29 +1430,37 @@ export function SchedulingPage() {
       <SchedulingToolbar
         currentPlanningDate={currentPlanningDate}
         currentPlanningShift={currentPlanningShift}
+        activeDependencyName={activeBoardModule?.name ?? "Todas"}
         weekDays={weekDays}
+        weekDayStatuses={weekDayStatuses}
         planningRangeStart={planningRangeStart}
         planningRangeEnd={planningRangeEnd}
         onSelectDate={setPlanningDate}
         onSelectShift={setPlanningShift}
         onSelectRange={setPlanningRange}
       />
+      <SchedulingActionBar
+        currentPlanningDate={currentPlanningDate}
+        currentPlanningShift={currentPlanningShift}
+        activeModuleName={activeBoardModule?.name}
+        onAutoAssign={handleAutoAssign}
+        onResetAssignments={handleResetAssignments}
+        isSimulating={isSimulating}
+      />
       <EmployeeFiltersPanel modules={modules} />
 
       <DndContext onDragStart={handleDragStart} onDragOver={handleDragOver} onDragEnd={handleDragEnd}>
-        <div className="grid gap-6 xl:grid-cols-[340px_minmax(0,1fr)_320px]">
-          <section className="flex min-h-0 flex-col gap-2 self-start xl:sticky xl:top-4 xl:h-[calc(100vh-2rem)]">
-            <div>
-              <h2 className="text-sm font-semibold uppercase tracking-[0.2em] text-muted-foreground">Pool de empleados</h2>
-              <p className="mt-1 text-sm text-slate-500">Se organiza por prioridad operativa para evitar una lista plana cuando la dotación escala.</p>
-            </div>
+        <div className="grid items-start gap-6 xl:grid-cols-[340px_minmax(0,1fr)_320px]">
+          <section className="flex min-h-0 flex-col gap-2 self-start xl:sticky xl:top-6 xl:max-h-[calc(100vh-1.5rem)]">
             <EmployeeListPanel
-              employees={visibleEmployees}
+              employees={contextualPoolEmployees}
               modules={modules}
               activeRules={activeRules}
               hoveredModuleId={hoveredModule?.id}
+              priorityModuleId={activeBoardModule?.id}
+              assignedTodayEmployeeIds={Array.from(assignedEmployeesTodayIds)}
               onQuickAssign={handleQuickAssign}
-              weeklyAssignments={weeklyAssignments}
+              weeklyAssignments={effectiveWeeklyAssignments}
               weekStartDate={weekStartDate}
               planningDate={currentPlanningDate}
               planningShift={currentPlanningShift}
@@ -1268,12 +1468,6 @@ export function SchedulingPage() {
           </section>
 
           <section className="space-y-4">
-            <div className="flex items-center justify-between px-1">
-              <div>
-                <h2 className="text-sm font-semibold uppercase tracking-[0.2em] text-muted-foreground">Módulos</h2>
-                <p className="mt-1 text-sm text-slate-500">Centro operativo de dependencias y cobertura por turno.</p>
-              </div>
-            </div>
             <ModuleBoard
               modules={modules}
               employees={Array.from(employeeMap.values())}
@@ -1287,9 +1481,11 @@ export function SchedulingPage() {
               releasedTargetId={lastReleasedTargetId}
               planningDate={currentPlanningDate}
               planningShift={currentPlanningShift}
-              weeklyAssignments={weeklyAssignments}
+              weeklyAssignments={effectiveWeeklyAssignments}
               weekStartDate={weekStartDate}
+              activeModuleId={activePlanningDependencyId}
               incidentImpacts={localizedIncidentImpacts}
+              onChangeActiveModule={handleChangeActiveBoardModule}
               onSelectIncidentImpact={handleSelectIncidentCase}
               onSelectTarget={handleSelectBoardTarget}
               onSelectModule={handleSelectModule}
@@ -1298,16 +1494,14 @@ export function SchedulingPage() {
           </section>
 
           <section className="space-y-4">
-            <div>
-              <h2 className="text-sm font-semibold uppercase tracking-[0.2em] text-muted-foreground">Copiloto</h2>
-              <p className="mt-1 text-sm text-slate-500">Contexto operativo y asistencia IA integrada a la programación.</p>
-            </div>
             <ContextDetailPanel
               feedback={feedback}
               activeRules={activeRules}
               simulation={simulation}
               publicationVersions={publicationVersions}
               auditEntries={auditEntries}
+              diagnostics={autoAssignDiagnostics}
+              restSummary={restSummary}
               hoverPreview={hoverPreview}
               incidentImpacts={localizedIncidentImpacts}
               selectedIncidentImpact={selectedIncidentImpact}
@@ -1317,6 +1511,7 @@ export function SchedulingPage() {
             />
             <AICopilotPanel
               activeCase={copilotCase}
+              restSummary={restSummary}
               onApplyPrimary={handleApplyCopilotPrimary}
               onCompareAlternatives={handleCompareCopilotAlternatives}
               onSimulateImpact={handleSimulateCopilotImpact}
@@ -1330,4 +1525,20 @@ export function SchedulingPage() {
       </DndContext>
     </div>
   );
+}
+
+function getShiftLabel(shift: ShiftKind) {
+  if (shift === "manana") {
+    return "Mañana";
+  }
+  if (shift === "tarde") {
+    return "Tarde";
+  }
+  if (shift === "noche") {
+    return "Noche";
+  }
+  if (shift === "noche_larga") {
+    return "Noche larga";
+  }
+  return "Libre";
 }

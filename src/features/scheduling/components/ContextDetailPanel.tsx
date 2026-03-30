@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/shared/components/ui
 import type { Rule } from "@/shared/types/rule.types";
 import type {
   AuditEntry,
+  DailyRestOperationalSummary,
   HoverAssignmentPreview,
   LocalizedIncidentImpact,
   PublicationSimulationResult,
@@ -17,6 +18,8 @@ export function ContextDetailPanel({
   simulation,
   publicationVersions,
   auditEntries,
+  diagnostics,
+  restSummary,
   hoverPreview,
   incidentImpacts,
   selectedIncidentImpact,
@@ -29,6 +32,8 @@ export function ContextDetailPanel({
   simulation?: PublicationSimulationResult | null;
   publicationVersions?: PublicationVersion[];
   auditEntries?: AuditEntry[];
+  diagnostics?: string[] | null;
+  restSummary?: DailyRestOperationalSummary | null;
   hoverPreview?: HoverAssignmentPreview | null;
   incidentImpacts?: LocalizedIncidentImpact[];
   selectedIncidentImpact?: LocalizedIncidentImpact | null;
@@ -83,6 +88,24 @@ export function ContextDetailPanel({
           </div>
           <p className="mt-3">Se validan cobertura, rol, competencias, disponibilidad, horas y descansos según el rulebook activo.</p>
         </div>
+
+        {restSummary ? (
+          <div className="rounded-2xl bg-slate-50 p-4">
+            <div className="flex items-center gap-2 font-semibold text-slate-700">
+              <ShieldAlert className="h-4 w-4 text-emerald-600" />
+              Descansos del día
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Badge variant="success">{restSummary.assignedRestCount} libres asignados</Badge>
+              <Badge variant="warning">{restSummary.requiresCompensatoryCount} requieren compensatorio</Badge>
+              <Badge variant="info">{restSummary.protectedPostNightCount} protegidos post noche</Badge>
+              <Badge variant="danger">{restSummary.sameDayLockCount} no deben tomar otra jornada</Badge>
+            </div>
+            <p className="mt-3">
+              El descanso se gestiona como protección operativa del personal y no como cobertura clínica del módulo.
+            </p>
+          </div>
+        ) : null}
 
         {incidentImpacts?.length ? (
           <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-900">
@@ -197,6 +220,22 @@ export function ContextDetailPanel({
             <div className="mt-3 flex flex-wrap gap-2">
               <Badge variant={simulation.canPublish ? "success" : "danger"}>Readiness {simulation.readinessScore}</Badge>
               <Badge variant="secondary">{simulation.affectedModuleIds.length} módulos impactados</Badge>
+            </div>
+          </div>
+        ) : null}
+
+        {diagnostics?.length ? (
+          <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sky-900">
+            <p className="font-semibold">Traza operativa</p>
+            <p className="mt-2 text-sm">
+              Esta vista muestra qué generó la autoasignación, qué quedó persistido para el día y qué está leyendo la jornada visible.
+            </p>
+            <div className="mt-3 space-y-2">
+              {diagnostics.map((line) => (
+                <div key={line} className="rounded-xl border border-sky-200/70 bg-white/70 px-3 py-2 text-sm text-sky-900">
+                  {line}
+                </div>
+              ))}
             </div>
           </div>
         ) : null}

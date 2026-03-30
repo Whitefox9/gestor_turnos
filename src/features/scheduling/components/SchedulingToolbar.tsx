@@ -1,23 +1,17 @@
-import { ChevronLeft, ChevronRight, CalendarDays, Moon, MoonStar, Sun, Sunset } from "lucide-react";
+import { ChevronLeft, ChevronRight, CalendarDays } from "lucide-react";
 import { Badge } from "@/shared/components/ui/badge";
 import { Button } from "@/shared/components/ui/button";
 import { cn } from "@/shared/utils/cn";
 import type { ShiftKind } from "@/shared/types/scheduling.types";
-
-const shiftOptions: Array<{ value: ShiftKind; label: string; icon: typeof Sun }> = [
-  { value: "manana", label: "Mañana", icon: Sun },
-  { value: "tarde", label: "Tarde", icon: Sunset },
-  { value: "noche", label: "Noche", icon: MoonStar },
-  { value: "noche_larga", label: "Noche larga", icon: Moon },
-  { value: "descanso_remunerado", label: "Descanso", icon: Moon },
-];
 
 const weekDayLabels = ["L", "M", "M", "J", "V", "S", "D"];
 
 export function SchedulingToolbar({
   currentPlanningDate,
   currentPlanningShift,
+  activeDependencyName,
   weekDays,
+  weekDayStatuses,
   planningRangeStart,
   planningRangeEnd,
   onSelectDate,
@@ -26,7 +20,9 @@ export function SchedulingToolbar({
 }: {
   currentPlanningDate: string;
   currentPlanningShift: ShiftKind;
+  activeDependencyName: string;
   weekDays: Array<{ date: string; label: string }>;
+  weekDayStatuses: Array<{ date: string; isComplete: boolean; hasAnyAssignments: boolean }>;
   planningRangeStart: string;
   planningRangeEnd: string;
   onSelectDate: (date: string) => void;
@@ -55,111 +51,119 @@ export function SchedulingToolbar({
 
   return (
     <div className="space-y-4 rounded-3xl border bg-white/80 p-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3 text-sm text-muted-foreground">
-          <CalendarDays className="h-4 w-4 text-primary" />
-          Planificación mensual operando por día activo
-        </div>
-        <Badge variant="info">
-          {formatDate(currentPlanningDate)} · {getShiftLabel(currentPlanningShift)}
-        </Badge>
+      <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-4">
+        <ContextSummaryCard label="Semana activa" value={`${formatShortDate(weekDays[0]?.date ?? currentPlanningDate)} - ${formatShortDate(weekDays[6]?.date ?? currentPlanningDate)}`} />
+        <ContextSummaryCard label="Día seleccionado" value={formatDate(currentPlanningDate)} />
+        <ContextSummaryCard label="Jornada activa" value={getShiftLabel(currentPlanningShift)} tone="info" />
+        <ContextSummaryCard label="Dependencia activa" value={activeDependencyName} tone="success" />
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
-        <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-semibold text-slate-800">{formatMonthTitle(monthStart)}</p>
-              <p className="mt-1 text-xs text-slate-500">
-                Selecciona un día o arma un rango corto. El board sigue trabajando sobre el día resaltado.
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button type="button" variant="outline" size="sm" className="h-8 w-8 rounded-xl p-0" onClick={() => handleMonthChange(-1)}>
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              <Button type="button" variant="outline" size="sm" className="h-8 w-8 rounded-xl p-0" onClick={() => handleMonthChange(1)}>
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-            </div>
+      <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-slate-800">{formatMonthTitle(monthStart)}</p>
+            <p className="mt-1 text-xs text-slate-500">
+              Selecciona el día operativo dentro de la semana activa. La jornada se gestiona desde la dependencia activa en el board.
+            </p>
           </div>
-
-          <div className="mt-4 grid grid-cols-7 gap-2 text-center text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
-            {weekDayLabels.map((label, index) => (
-              <span key={`${label}-${index}`}>{label}</span>
-            ))}
-          </div>
-
-          <div className="mt-3 grid grid-cols-7 gap-2">
-            {monthGrid.map((day) => {
-              const isSelected = day.date === currentPlanningDate;
-              const inRange = day.date >= planningRangeStart && day.date <= planningRangeEnd;
-              const isRangeEdge = day.date === planningRangeStart || day.date === planningRangeEnd;
-
-              return (
-                <button
-                  key={day.date}
-                  type="button"
-                  className={cn(
-                    "flex h-11 items-center justify-center rounded-xl border text-sm transition",
-                    day.isCurrentMonth ? "border-slate-200 bg-white text-slate-700" : "border-slate-100 bg-slate-100/70 text-slate-400",
-                    inRange && "border-cyan-200 bg-cyan-50 text-cyan-800",
-                    isRangeEdge && "border-primary bg-primary text-white",
-                    isSelected && "ring-2 ring-primary/20",
-                  )}
-                  onClick={() => handleDateSelection(day.date)}
-                >
-                  {day.dayNumber}
-                </button>
-              );
-            })}
+          <div className="flex items-center gap-2">
+            <Button type="button" variant="outline" size="sm" className="h-8 w-8 rounded-xl p-0" onClick={() => handleMonthChange(-1)}>
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <Button type="button" variant="outline" size="sm" className="h-8 w-8 rounded-xl p-0" onClick={() => handleMonthChange(1)}>
+              <ChevronRight className="h-4 w-4" />
+            </Button>
           </div>
         </div>
 
-        <div className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
-          <div>
-            <p className="text-sm font-semibold text-slate-800">Ventana activa</p>
-            <p className="mt-1 text-xs text-slate-500">
-              {formatShortDate(planningRangeStart)}
-              {planningRangeStart !== planningRangeEnd ? ` → ${formatShortDate(planningRangeEnd)}` : ""}
-            </p>
-          </div>
+        <div className="mt-4 grid grid-cols-7 gap-2 text-center text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+          {weekDayLabels.map((label, index) => (
+            <span key={`${label}-${index}`}>{label}</span>
+          ))}
+        </div>
 
-          <div className="flex flex-wrap gap-2">
-            {weekDays.map((day) => (
-              <Button
+        <div className="mt-3 grid grid-cols-7 gap-2">
+          {monthGrid.map((day) => {
+            const isSelected = day.date === currentPlanningDate;
+            const inRange = day.date >= planningRangeStart && day.date <= planningRangeEnd;
+            const isRangeEdge = day.date === planningRangeStart || day.date === planningRangeEnd;
+
+            return (
+              <button
                 key={day.date}
                 type="button"
-                variant={currentPlanningDate === day.date ? "default" : "outline"}
-                className="rounded-xl"
-                onClick={() => {
-                  onSelectRange(day.date, day.date);
-                  onSelectDate(day.date);
-                }}
+                className={cn(
+                  "flex h-11 items-center justify-center rounded-xl border text-sm transition",
+                  day.isCurrentMonth ? "border-slate-200 bg-white text-slate-700" : "border-slate-100 bg-slate-100/70 text-slate-400",
+                  inRange && "border-cyan-200 bg-cyan-50 text-cyan-800",
+                  isRangeEdge && "border-primary bg-primary text-white",
+                  isSelected && "ring-2 ring-primary/20",
+                )}
+                onClick={() => handleDateSelection(day.date)}
               >
-                {day.label}
-              </Button>
-            ))}
-          </div>
+                {day.dayNumber}
+              </button>
+            );
+          })}
+        </div>
 
-          <div className="grid gap-2">
-            {shiftOptions.map((option) => {
-              const Icon = option.icon;
+        <div className="mt-4 rounded-2xl border border-slate-200 bg-white/80 p-4">
+          <div className="flex items-center gap-2 text-slate-800">
+            <CalendarDays className="h-4 w-4 text-primary" />
+            <p className="text-sm font-semibold">Semana activa</p>
+          </div>
+          <p className="mt-1 text-xs text-slate-500">
+            {formatShortDate(weekDays[0]?.date ?? planningRangeStart)} → {formatShortDate(weekDays[6]?.date ?? planningRangeEnd)}
+          </p>
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            {weekDays.map((day) => {
+              const dayStatus = weekDayStatuses.find((item) => item.date === day.date);
+              const isSelected = currentPlanningDate === day.date;
+
               return (
                 <Button
-                  key={option.value}
+                  key={day.date}
                   type="button"
-                  variant={currentPlanningShift === option.value ? "default" : "outline"}
-                  className="justify-start rounded-xl"
-                  onClick={() => onSelectShift(option.value)}
+                  variant={isSelected ? "default" : "outline"}
+                  className={cn(
+                    "rounded-xl",
+                    dayStatus?.isComplete && !isSelected && "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100",
+                    dayStatus?.hasAnyAssignments && !dayStatus?.isComplete && !isSelected && "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100",
+                  )}
+                  onClick={() => {
+                    onSelectRange(weekDays[0]?.date ?? day.date, weekDays[6]?.date ?? day.date);
+                    onSelectDate(day.date);
+                  }}
                 >
-                  <Icon className="h-4 w-4" />
-                  {option.label}
+                  {day.label}
+                  {dayStatus?.isComplete ? " · OK" : dayStatus?.hasAnyAssignments ? " · En curso" : ""}
                 </Button>
               );
             })}
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function ContextSummaryCard({
+  label,
+  value,
+  tone = "neutral",
+}: {
+  label: string;
+  value: string;
+  tone?: "neutral" | "info" | "success";
+}) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-3">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">{label}</p>
+      <div className="mt-2 flex items-center justify-between gap-3">
+        <p className="text-sm font-medium text-slate-800">{value}</p>
+        {tone === "info" ? <Badge variant="info">Activa</Badge> : null}
+        {tone === "success" ? <Badge variant="success">Foco</Badge> : null}
       </div>
     </div>
   );
